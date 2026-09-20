@@ -92,11 +92,58 @@ std::atomic<float> gDrawDistanceSetting{ 0.0f };
 // its own state, so editing it by hand does not stick either. Both of those were tried and both failed
 // to take effect. Code is the only place a saved value cannot get past.
 //
-// BAR_DRAW_DIST deliberately bypasses the cap: raising the distance is exactly what a debugging run
-// needs to do, and it is how the ceiling will be re-tested once the object list is found.
-constexpr float kMaxSafeFarScale = 1.0f;
+// A PER-COURSE ceiling, rather than one global cap.
+//
+// Wicked Woods drops dynamic objects -- the player's own car, and the trees near it -- on its big jump
+// once the far plane is extended too far. Bisected with Daniel on that exact jump:
+//
+//     1.05x   clean
+//     1.5x    clean, and the extra scenery is visible
+//     1.75x   the car vanishes on the approach to landing, but survives the rest of the jump
+//     2x, 4x  the car is gone for most of the time it is airborne
+//
+// The failure is **progressive**, not a cliff: raising the far plane makes the car vanish earlier in
+// the jump rather than suddenly. 1.5x is therefore a full step below the first observed failure rather
+// than a value balanced on the edge of one.
+//
+// The root cause is NOT known. docs/KNOWN_ISSUES.md lists nine refuted hypotheses, including every
+// per-frame pool -- all of which were measured WITH HEADROOM at the moment of failure (vertices
+// 232/1000, matrices 103/200, display list 1586/7500). The leading untested lead is uvsort_rom's depth
+// buckets (4 x 50): a full bucket is a silent no-op that drops the object BEFORE it emits any geometry,
+// which is precisely why no demand counter could ever see it -- a refused object stops consuming.
+//
+// Only Wicked Woods is capped, because only Wicked Woods has been shown to fail. The other courses keep
+// the full range the menu offers; they have NOT been tested at 2x or 4x, and if one of them turns out
+// to drop objects too, it gets added here.
+// MEASURED on the course with BAR_DBG_FRUSTUM=1, not inferred: `currentTrack` reads **6** during a
+// Wicked Woods race. The field is 1-based (Coventry 1 .. Wicked Woods 6), which matches gNumOpenTracks
+// = 6 covering Coventry through Wicked Woods.
+//
+// The first version of this cap used 5, taken from the zero-based order of the course list in
+// lib/bar-decomp/tools/checkModuleHash.py -- a hashing helper, not a runtime source. The cap compiled,
+// the logic was right and it silently never fired. **Read an index off the running game before keying
+// behaviour on it**; a list in a tools script is not evidence of what the game stores.
+constexpr int32_t kTrackWickedWoods = 6;
+constexpr float kWickedWoodsMaxFarScale = 1.5f;
 
-float drawDistanceScale() {
+// gGameSettings + 0x44 -- `/* 0x0044 */ s32 currentTrack;` (lib/bar-decomp/include/structs.h:87).
+// Same sign-extended addressing os_unimpl_stubs.cpp uses for this struct.
+constexpr uint32_t kCurrentTrackAddr = 0x80025D34u;
+
+float courseCappedScale(uint8_t *rdram, float scale) {
+    if (scale <= kWickedWoodsMaxFarScale) {
+        return scale;
+    }
+    if (MEM_W(0, (int64_t)(int32_t)kCurrentTrackAddr) == kTrackWickedWoods) {
+        return kWickedWoodsMaxFarScale;
+    }
+    return scale;
+}
+
+float drawDistanceScale(uint8_t *rdram) {
+    // BAR_DRAW_DIST is the debugging override and deliberately bypasses the per-course cap -- pinning a
+    // value above it is exactly how the ceiling was bisected, and how it gets re-tested if the root
+    // cause is ever found.
     static const char *const envSet = std::getenv("BAR_DRAW_DIST");
     if (envSet != nullptr) {
         static const float scale = envScale("BAR_DRAW_DIST", 4.0f, 64.0f);
@@ -104,11 +151,10 @@ float drawDistanceScale() {
     }
 
     // 1x until a setting arrives. This used to be 4x, which meant the no-frontend build and every
-    // frame before the menu loads extended the far plane -- and extending it is what drops objects
-    // (see farReachesChannel below and docs/KNOWN_ISSUES.md). The safe value is the game's own.
+    // frame before the menu loads extended the far plane -- and extending it is what drops objects.
     const float fromMenu = gDrawDistanceSetting.load(std::memory_order_relaxed);
     const float wanted = (fromMenu > 0.0f) ? fromMenu : 1.0f;
-    return (wanted > kMaxSafeFarScale) ? kMaxSafeFarScale : wanted;
+    return courseCappedScale(rdram, wanted);
 }
 
 // How much wider than its own 4:3 frustum the game should be willing to CULL against.
@@ -217,6 +263,20 @@ extern "C" void bar_frustum_adjust(uint8_t *rdram, unsigned dst, unsigned *l, un
     // originals instead -- see the note on WidenedPair.
     restoreWidened(l, r);
 
+    // Which course the game thinks it is on, reported whenever it changes. The per-course cap keys on
+    // this, and the index it compares against was originally TAKEN FROM A TOOLS SCRIPT'S COURSE LIST
+    // rather than measured -- which is exactly why the cap failed to engage on Wicked Woods. Read the
+    // number here, on the course, instead of inferring it.
+    if (traceEnabled()) {
+        static int32_t lastTrack = -0x7FFFFFFF;
+        const int32_t track = MEM_W(0, (int64_t)(int32_t)kCurrentTrackAddr);
+        if (track != lastTrack) {
+            lastTrack = track;
+            std::fprintf(stderr, "[frustum] currentTrack -> %d\n", track);
+            std::fflush(stderr);
+        }
+    }
+
     const float left = asFloat(*l);
     const float right = asFloat(*r);
     const float nearZ = asFloat(*n);
@@ -235,7 +295,7 @@ extern "C" void bar_frustum_adjust(uint8_t *rdram, unsigned dst, unsigned *l, un
         }
     }
 
-    const float distScale = drawDistanceScale();
+    const float distScale = drawDistanceScale(rdram);
     const float widenScale = cullWidenScale();
     const bool wantDistance = (distScale != 1.0f) && (farZ > 0.0f) && (farZ < kSkyFarMin) && (nearZ > 0.0f);
     const bool wantWiden = (widenScale != 1.0f) && (right > left);
@@ -274,9 +334,12 @@ extern "C" void bar_frustum_adjust(uint8_t *rdram, unsigned dst, unsigned *l, un
     }
 
     if (traceEnabled()) {
-        static bool announced = false;
-        if (!announced) {
-            announced = true;
+        // Re-announce whenever the APPLIED scale changes, not just once: the per-course cap means the
+        // same menu setting yields different scales on different courses, and a one-shot line cannot
+        // show that. This is what verifies the cap engaging on Wicked Woods and lifting elsewhere.
+        static float lastAnnounced = -1.0f;
+        if (lastAnnounced != distScale) {
+            lastAnnounced = distScale;
             std::fprintf(stderr,
                          "[frustum] draw distance x%.2f (far %.1f -> %.1f), cull widen x%.2f; channel %s\n",
                          distScale, farZ, newFar, widenScale,

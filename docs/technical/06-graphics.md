@@ -122,27 +122,30 @@ Measured in a race with `BAR_DBG_FRUSTUM=1`, two projections are built per frame
 [`fix-recompiled.sh` rule H](07-codegen-fixups-and-patches.md#rule-h--frustum-draw-distance-and-culling-width):
 
 * **Draw distance.** The far plane is multiplied by the frontend's *Graphics → Draw Distance* setting
-  (1× / 2× / 4×, **default 1× since 2026-09-20** — see below), or by `BAR_DRAW_DIST` when set (which
+  (1× / 1.5× / 2× / 4×, **default 1.5× since 2026-09-20**, with a per-course ceiling — see below), or
+  by `BAR_DRAW_DIST` when set (which
   wins, so a debugging run can pin a value while the menu is being changed). It is applied to **both**
   the projection matrix and the channel field — moving the matrix's far plane alone would leave the
   game culling everything past the old one, and nothing new would appear. Projections at or beyond
   `far = 5000` are skipped, so the 27000 sky matrix keeps its depth range.
 
-  **Why the default is 1×.** Those two writes do different jobs, and the channel one has a cost that
-  went unnoticed until Wicked Woods. The matrix write only widens the depth range drawn; the channel
-  write moves the game's *culling* far plane, so the game submits objects it would otherwise skip.
-  A frustum's volume grows with the **cube** of its far plane, so 2× asks it to consider roughly 8×
-  as many objects per frame and 4× roughly 64×. Past some fixed per-frame capacity the extra objects
-  are not drawn — and what gets dropped includes **the player's own car**. Confirmed by gating only
-  the channel write off (`BAR_FAR_CHANNEL=0`), which stops the dropping entirely while everything
-  else stays the same.
+  **Why there is a per-course ceiling.** Those two writes do different jobs. The matrix write only
+  widens the depth range drawn; the **channel** write moves the game's *culling* far plane, so the game
+  submits objects it would otherwise skip -- and on Wicked Woods' big jump that makes the player's car
+  and the trees around it vanish outright. Confirmed by gating only the channel write off
+  (`BAR_FAR_CHANNEL=0`), which stops it entirely.
 
-  The pool that runs out is the shared per-frame vertex pool in `uvdgeom_rom` (1000–1550 vertices in a
-  race). The trees are billboards, they cull against this same frustum, and their frame callback runs at
-  priority `0x32` against dynamic objects' `0x3C` — so **the extra trees spend the vertex budget before
-  the car asks for any**, and `uvVtx` answers an exhausted pool with an index it never wrote, which draws
-  nothing. With only 100 billboard slots in existence, 2× already admits all of them, so 2× and 4× fail
-  identically: saturation, not a threshold. Full write-up, including six refuted hypotheses, in
+  The failure is **progressive**: bisected on that jump, 1.5x is clean, 1.75x loses the car on the
+  approach to landing, and 2x/4x lose it for most of the jump. So `drawDistanceScale()` clamps the
+  multiplier to **1.5x** when `currentTrack` (`gGameSettings + 0x44` = `0x80025D34`) is Wicked Woods
+  (**6** -- the field is 1-based, measured on the course, not taken from a tools script's list). Other
+  courses keep the full range.
+
+  **The root cause is not known**, and nine hypotheses are refuted with measurements -- including every
+  per-frame pool, all of which had headroom at the moment of failure (vertices 232/1000, matrices
+  103/200, display list 1586/7500). The leading untested lead is `uvsort_rom`'s 4x50 depth buckets,
+  whose overflow is a silent no-op *before* any geometry is emitted, which is exactly why demand
+  counters could never see it. Full write-up, including the traps, in
   [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
   Note the asymmetry with culling **width** below: widening the sides costs a few extra clipped draws,

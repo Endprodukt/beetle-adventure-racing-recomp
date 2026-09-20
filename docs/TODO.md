@@ -35,6 +35,26 @@ Render-resolution scaling + supersampling now exposed in Settings (`res_option` 
 applied on restart; Native high-res scales added on the N64ModernRuntime fork. Default internal
 resolution is now display-native/Auto (`a078074`). Same work as item **#3**. Detail in STATUS.md.
 
+### R4b. ⬜ Draw distance should work properly on every course (currently a per-course workaround)
+**Daniel, 2026-09-20:** *"This is a stable workaround, however, in the future I will want to properly
+implement and fix the drawdistance everywhere."*
+
+Today's shipped state is a **ceiling, not a fix**: `src/main/bar_frustum.cpp` clamps the far multiplier
+to 1.5× on Wicked Woods (`currentTrack == 6`) because above that the player's car and nearby trees
+vanish on its big jump. Other courses keep the full 2×/4× range, **untested beyond one pass each**.
+
+The cause is unknown and **nine hypotheses are already refuted with measurements** — do not re-run them,
+they are tabulated in [KNOWN_ISSUES.md](KNOWN_ISSUES.md). The single most important lesson recorded
+there: the per-frame demand counters (`BAR_DBG_POOLS`) cannot see this bug, because whatever drops the
+car does so *before* it emits geometry, so a refused object makes demand **fall**.
+
+**Next concrete step:** `uvsort_rom`'s depth buckets (4 × 50). A full bucket is a silent no-op
+(`uvsort_rom.c:235-248`) that drops the object before any geometry is emitted — the only refuted-proof
+shape left. Raise the defaults **at the constants** in `uvsort_rom`'s entrypoint, never via system prop
+0x10 (prop-based sizing switched `uvterra` onto a different branch and black-screened the race).
+Beware: changing how much memory a pool takes has broken the main-menu widescreen three times out of
+three, most likely via RT64's content-hash HUD identities.
+
 ### R5. ⬜ Setting to disable car LOD
 Disable level-of-detail swapping for cars (always render the high-detail model). Needs to find the
 car LOD selection in the decomp (`lib/bar-decomp` car/model modules) and a host flag (bar_config-style)

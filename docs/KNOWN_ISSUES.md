@@ -5,98 +5,88 @@ Add the negative results, not just the leads — they are the expensive part.
 
 ---
 
-## OPEN (mitigated) -- Draw Distance above 1x drops dynamic objects, including the player's car
+## OPEN (mitigated, cause UNKNOWN) -- extending the far plane drops dynamic objects on Wicked Woods
 
 Reported by Daniel 2026-09-20: on **Wicked Woods**, on one of the big jumps, the player's car vanishes
-completely while airborne. He later observed that **trees vanish at the same moment**, while the track
-and the HUD stay put. It does not happen on original hardware, and **Draw Distance 1x fixes it**.
+completely while airborne, and **trees vanish with it**, while the track and the HUD stay put. It does
+not happen on original hardware.
 
-**Cause (confirmed by experiment).** `src/main/bar_frustum.cpp` writes the scaled far plane to two
-places, and only one of them is responsible:
+**What is established, by experiment:**
 
-* the **projection matrix** (`*f`) — widens the depth range that is *drawn*. Harmless.
-* the **camera channel** (`MEM_W(kChanFar, chan)`) — moves the game's own far *culling* plane, which is
-  what makes the game submit objects it would otherwise skip.
+* It is caused by the **camera-channel** far-plane write in `src/main/bar_frustum.cpp`, not the
+  projection-matrix one. Gating off only the channel write (`BAR_FAR_CHANNEL=0`) at 4x stops it
+  completely with everything else unchanged.
+* It is **progressive, not a cliff.** Bisected with Daniel on the failing jump:
 
-Gating off *only* the channel write (`BAR_FAR_CHANNEL=0`) at 4x made the vanishing stop completely,
-with everything else unchanged. So the game is being asked to submit far more dynamic objects per frame
-than it was built for, and past some fixed capacity they are dropped. A frustum's volume grows with the
-**cube** of its far plane, so even 2x asks for roughly **8x** as many objects — which is why 2x and 4x
-behave identically and 1x never fails.
+  | Far multiplier | Result |
+  |---|---|
+  | 1.05x | clean |
+  | **1.5x** | **clean, and the extra scenery is visible** |
+  | 1.75x | the car vanishes on the *approach to landing*, but survives the rest of the jump |
+  | 2x, 4x | the car is gone for most of the time it is airborne |
 
-**The list that overflows is now known: the shared per-frame vertex pool in `uvdgeom_rom`.** The chain,
-each link read in the decomp:
+  Raising the far plane makes the car vanish *earlier in the jump*, rather than switching the bug on.
 
-1. The **trees are billboards** (`uvbill_rom`), and `func_uvbill_rom_00400DEC` calls the sphere-vs-frustum
-   test (CHAN exports slot `0x2C`) per billboard. Extending the cull far plane admits far more of them.
-2. Billboards emit through **DGEO**, i.e. the shared per-frame vertex pool, which a race sizes at only
-   **1000–1550 vertices** (`func_game_004001E4` → `uvGetSystemProp(14)` → `uvdgeom_rom.c:72-87`).
-3. That pool's overflow behaviour is the whole bug — `uvdgeom_rom.c:110-112`:
-   ```c
-   s16 uvVtx(...) {
-       if (sMaxVertexCount < sVertexCount) {
-           return sVertexCount;      // an index it never wrote
-   ```
-   It returns an index for a vertex that was never filled in, so the triangles referencing it are
-   degenerate or garbage and the object is **not drawn at all**. That is why the symptom is "disappears
-   completely" rather than flickering or misplaced.
-4. **Callback order decides who starves.** Billboards register their frame callback at priority `0x32`
-   (`uvbill_rom.c:30`), dynamic objects at `0x3C` (`uvdobj_rom.c:59`), and `uvcback_rom.c:96-105` runs
-   them in ascending priority. **The trees consume the pool before the player's car asks for vertices.**
-   The car, drawn later, gets unwritten indices and vanishes — along with the trees past the exhaustion
-   point. Both together, which is exactly what was observed.
-
-The HUD is 2D texture rectangles rather than pooled vertices, so it was never at risk — and its survival
-is what made the early rounds chase the display list instead. Terrain has its own tile list and sort
-buckets and is likewise unaffected.
-
-**Why 2x and 4x fail identically while 1x never does.** There are only **100 billboard slots** in total
-(`uvbill_rom`'s module default; the game never sets property `0x0D`). By 2x the widened frustum already
-admits essentially all of them, so 4x admits no more — **saturation, not a threshold**. This is why
-tuning the multiplier down was never going to find a safe value between 1x and 2x. A related clamp sits
-in `uvterra_rom.c:153-171`, where the tile range is clamped to the whole terrain grid.
-
-**The root fix, not yet done:** grow the vertex pool (property 14) to match the draw distance, and check
-the matrix stack (`uvimtx_rom.c:184-196`, 200–400 per race frame) alongside it — that one returns `NULL`
-when full and the object silently loses its `gSPMatrix`. Heap headroom already exists: fixup rule A moved
-the cap to `0x80800000`. Risks to measure: heap pressure, and the per-frame `uvMemSet` cost scaling with
-pool size.
-
-**Mitigation shipped:** `drawDistanceScale()` clamps the menu value to `kMaxSafeFarScale = 1.0f`
-(`src/main/bar_frustum.cpp`), its pre-menu fallback dropped from 4x to 1x, and the frontend default is
-1x. `BAR_DRAW_DIST` deliberately bypasses the clamp, so a debugging run can still raise the distance —
-that is how the ceiling gets re-tested once the object list is found.
-
-**The clamp is in code for a reason, and getting there cost a playtest.** Changing only the frontend
-default did nothing, because a default applies to a *fresh* config and Daniel's `graphics.json` already
-said `"2x"`. Editing that file by hand did not stick either: the frontend rewrote it back to `"2x"`
-minutes later. Daniel played that build and reported the bug unfixed — correctly, because the build was
-running at 2x. **Verify the applied value, not the intended one:** `BAR_DBG_FRUSTUM=1` prints the pushed
-setting and the applied scale on separate lines (`Draw Distance setting -> x2.00` against
-`draw distance x1.00 (far 700.0 -> 700.0)`), which is what confirmed the clamp.
-
-Consequence to tidy up: the menu still *offers* 2x and 4x while the clamp makes them inert. The option's
-description warns about the bug, but the honest fix is to drop those entries (or re-enable them) once
-the root cause is dealt with.
-
-**Ruled out, with the evidence — do not re-run these:**
+**The root cause is NOT known.** Nine hypotheses are refuted, each by measurement. Do not re-run these:
 
 | Hypothesis | How it died |
 |---|---|
-| The game's frustum **culling planes** move with `far` | They cannot. `func_uvchannel_rom_00401658` builds the side planes as cross products of the far-plane corner vectors; worked out explicitly, the right plane is `1.1422·F²·(1, −1.3428, 0)` and the bottom is `2R·(0, B, −F)`, so `F` factors out of both. The planes are identical at 300, 600 and 1200. Only the far *distance* test changes, and only to become more permissive |
-| **Perspective normalization** — the game recomputes it from the inflated far (`uvchannel_rom.c:454`, 435 → 109) | Real on hardware, inert here: RT64's `RSP::setPerspNorm` is an empty `// TODO` (`lib/rt64/src/hle/rt64_rsp.cpp:965`) |
-| **Depth precision / z-fighting** | `m[2][2]` −1.00669 → −1.00167, `m[3][2]` −2.00669 → −2.00167. A car ~20 units out moves from window z 0.9532 to 0.9508 |
-| The game builds a **different camera** at that jump | `BAR_DBG_FRUSTUM=1` over a full run: the racing frustum is byte-identical on all 5,411 race frames (`±0.7673`, `±0.5711`, near 1, far 300) |
-| The **display list** overflows | `BAR_DBG_DLIST=1`: capacity is 60,000 bytes / 7,500 commands (two buffers at `0x80300000`, gap `0x0EA60`), and the attract peak is 1,586 commands — 21%. Also refuted on screen: the HUD is built last, so a truncated list would lose the HUD before the car, and the HUD survives |
-| The **projection-matrix** far write | `BAR_FAR_CHANNEL=0` keeps that write and drops only the channel write; nothing vanished |
+| The game's frustum **culling planes** move with `far` | They cannot. `func_uvchannel_rom_00401658` builds the side planes as cross products of the far-plane corner vectors, which are `far x (extent/near, 1, extent/near)` -- a uniform scale, so `F` factors out. Worked out explicitly: right plane `1.1422*F^2*(1, -1.3428, 0)`, bottom `2R*(0, B, -F)`. Identical at 300, 600, 1200 |
+| The **far distance test** rejects the car | It only ever LOOSENS as `far` grows: reject iff `dot(fwd,p) > far + r` (`func_uvchannel_rom_004014E8`) |
+| **Perspective normalization** (recomputed from the inflated far, 435 -> 109) | Real on hardware, inert here: RT64's `RSP::setPerspNorm` is an empty `// TODO` (`lib/rt64/src/hle/rt64_rsp.cpp:965`) |
+| **Depth precision / z-fighting** | `m[2][2]` -1.00669 -> -1.00167; a car ~20 units out moves from window z 0.9532 to 0.9508 |
+| A **different camera** at that jump | `BAR_DBG_FRUSTUM=1`: the racing frustum is byte-identical on all 5,411 race frames |
+| The **display list** overflows | `BAR_DBG_DLIST=1`: 1,586 of 7,500 commands. Also refuted on screen -- the HUD is built last, so a truncated list would lose the HUD first, and it survives |
+| The **vertex pool** (`uvdgeom`) is exhausted | Measured at the moment of failure: **232 / 1000**, `0 frames over` |
+| The **matrix stack** (`uvimtx`) is exhausted | Measured at the moment of failure: **103 / 200**, `0 frames over` |
+| The **terrain visible-tile list** (`uvterra`, unguarded append) overflows | Raised 64 -> 512 -> 4096. Still vanishes at all three |
+| RT64's **HUD/widescreen layer classification** misplaces it | `BAR_HUD_ANCHOR=0` at 4x: still vanishes |
 
-**Next concrete step:** find the fixed-size per-frame object/sort list and its capacity — start from the
-callers of the sphere-vs-frustum test `func_uvchannel_rom_004014E8` (exported at slot `0x2C`) and what
-they append to when it passes. Growing it would let Draw Distance be restored. Failing that, the cull
-far plane could be extended by much less than the matrix far plane, trading distance for safety.
+**Why the demand counters were the wrong instrument, and what that implies.** `BAR_DBG_POOLS` counted
+calls to `uvVtx` and `uvIMtxPush` per frame. But **a refused object stops consuming** -- whatever drops
+the car does so *before* it emits geometry, so the counters see demand FALL, not rise. Any pool whose
+failure mode is "silently do nothing" is therefore invisible to them.
 
-**Not verified:** whether other courses with long views (Inferno Isle, Metro Madness) drop objects at 2x
-or 4x as well. Only the one Wicked Woods jump has been tested.
+**The leading untested lead** is `uvsort_rom`'s depth-sorted buckets -- **4 buckets x 50 entries**, and a
+full bucket is a silent no-op (`uvsort_rom.c:235-248`) that drops the object before any geometry is
+emitted. That matches every surviving fact: quantity-dependent, progressive, invisible to the counters,
+and the car is submitted after the trees so it is what gets squeezed out. To test it, raise the defaults
+at the constants in `uvsort_rom`'s entrypoint (NOT via system prop 0x10 -- see the trap below).
+
+**Mitigation shipped: a PER-COURSE cap.** `src/main/bar_frustum.cpp` clamps the far multiplier to
+**1.5x** when `currentTrack` (`gGameSettings + 0x44` = `0x80025D34`) is Wicked Woods. Every other course
+keeps the full range the menu offers. A **1.5x** option was added to the Graphics menu and is the new
+default. `BAR_DRAW_DIST` bypasses the cap, which is how the ceiling was bisected.
+
+**Traps this cost, all verified the hard way:**
+
+* **Read an index off the running game before keying behaviour on it.** The cap first used Wicked Woods
+  `== 5`, taken from the zero-based order of the course list in `lib/bar-decomp/tools/checkModuleHash.py`
+  -- a hashing helper, not a runtime source. It compiled, the logic was right, and it silently never
+  fired. Measured with `BAR_DBG_FRUSTUM=1` on the course, `currentTrack` is **6**: the field is 1-based.
+* **A default is not a setting.** Changing the frontend default did nothing, because a default only
+  applies to a *fresh* config; and editing `graphics.json` by hand did not stick either, because the
+  frontend rewrites that file from its own state. The clamp has to live where the value is consumed.
+  Verify the APPLIED value: `BAR_DBG_FRUSTUM=1` prints the pushed setting and the applied scale on
+  separate lines, and the applied line re-prints whenever it changes.
+* **Changing how much memory an engine pool takes breaks the main-menu widescreen.** Three for three:
+  6x pools, a 1024-entry tile prop write, and a 4096-entry tile capacity (64 KB) all broke it; 512
+  entries (8 KB) did not. Most likely RT64's BAR HUD identities are content hashes of a layer's first
+  draw call (`sBuiltinTags`, `<kind>#<hash>`), so anything that perturbs allocation or batching changes
+  the hashes and the promoted tags stop matching. **Growing engine pools in this port is not free.**
+* **System prop 0x11 is not a safe way to size the terrain list.** Its block's first word is 0, which
+  `uvterra` reads as "use my default of 64" (`0x87E003BC`). Writing a non-zero count there does raise
+  the capacity, but also switches the module onto its other branch, which then consumes the block's
+  second field -- that took the race to a black screen. Raise the default constant instead.
+* **An intermittent pre-existing crash will be blamed on whatever is being tested.** The "game closed
+  by itself" during one experiment was the known `_uvScDoneAud` boot crash (below), not the experiment.
+
+**Not verified:** whether any other course fails above 1.5x. Daniel tested the other courses at 4x
+without seeing it, but not exhaustively, and only Wicked Woods' jump is a known failure. If another
+course turns out to drop objects, add its index beside `kTrackWickedWoods`.
+
+**Wanted (Daniel, 2026-09-20):** this is accepted as a *stable workaround*, not the end state -- the
+draw distance should eventually work properly on every course. Tracked in `docs/TODO.md`.
 
 ---
 

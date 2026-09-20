@@ -77,10 +77,13 @@ extern "C" bool bar_output_silenced(void);
 namespace {
 
 // Keys are what land in graphics.json, so they must stay stable; the third field is the label.
+// The keys are what land in graphics.json and must stay stable, but the config stores the KEY rather
+// than the index, so 1.5x can be inserted in its natural place without invalidating a saved "2x"/"4x".
 const std::vector<recomp::config::ConfigOptionEnumOption> kDrawDistanceOptions = {
     { 0u, "1x", "1x" },
-    { 1u, "2x", "2x" },
-    { 2u, "4x", "4x" },
+    { 1u, "1.5x", "1.5x" },
+    { 2u, "2x", "2x" },
+    { 3u, "4x", "4x" },
 };
 
 const std::string kDrawDistanceOption = "draw_distance";
@@ -88,7 +91,8 @@ const std::string kDrawDistanceOption = "draw_distance";
 float draw_distance_scale_for(uint32_t index) {
     switch (index) {
         case 0:  return 1.0f;
-        case 1:  return 2.0f;
+        case 1:  return 1.5f;
+        case 2:  return 2.0f;
         default: return 4.0f;
     }
 }
@@ -98,18 +102,23 @@ void add_draw_distance_option() {
     config.add_enum_option(
         kDrawDistanceOption,
         "Draw Distance",
-        "How far into the distance the game draws. The original hardware drew 300 units ahead; "
-        "<recomp-color primary>2x</recomp-color> and <recomp-color primary>4x</recomp-color> extend "
-        "that, and extend the distance the game submits geometry for to match, so scenery stops "
-        "appearing out of the fog. Above <recomp-color primary>1x</recomp-color> the game submits "
-        "more objects per frame than it was built for, and on long views some can be dropped "
-        "entirely - including your own car (see KNOWN_ISSUES.md).",
+        // Plain prose, no markup beyond <recomp-color>: this description is parsed as RML, and a bare
+        // <br> is not self-closing there. It produced "closing tag 'body' mismatched, was expecting
+        // 'br'" in the frontend's event log -- the document still rendered, so the only symptom was a
+        // logged error. Every other option description here is plain text; keep it that way.
+        "How far into the distance the game draws. The original hardware drew 300 units ahead; the "
+        "higher settings extend that, and extend the distance the game submits scenery for to match, "
+        "so it stops appearing out of the fog. "
+        "<recomp-color primary>1.5x</recomp-color> is the highest setting verified not to drop "
+        "objects; above it, courses with long views can make cars and trees disappear for a moment, "
+        "and <recomp-color primary>Wicked Woods</recomp-color> is automatically limited to 1.5x "
+        "whatever you pick here.",
         kDrawDistanceOptions,
-        // 1x by default until the dropped-object bug above is fixed at its source. A frustum's volume
-        // grows with the CUBE of its far plane, so even 2x asks the game to consider ~8x as many
-        // objects per frame; measured on Wicked Woods, both 2x and 4x drop the player's car and nearby
-        // trees on the big jump, while 1x never does.
-        0u /* 1x */
+        // 1.5x: the highest multiplier bisected as safe on the worst case found so far (Wicked Woods'
+        // big jump), and the extra distance is visible. 1.75x drops the player's car on the approach
+        // to landing there; 2x and 4x drop it for most of the jump. The cap is enforced per course in
+        // src/main/bar_frustum.cpp, so 2x and 4x stay selectable and stay honest everywhere else.
+        1u /* 1.5x */
     );
 }
 
