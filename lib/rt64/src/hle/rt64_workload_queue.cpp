@@ -786,6 +786,23 @@ namespace RT64 {
                                 Framebuffer::Type::Color, colorImg.fmt, f, colorFb->readHeight, readRowCount, ext.shaderLibrary);
 
                             if (colorFbChange != nullptr) {
+                                // BAR_DBG_FBUPLOAD=1: RDRAM framebuffer content being uploaded into the
+                                // render target. This path is NOT a draw call, so nothing in the
+                                // aspect-ratio or HUD-classification machinery ever sees it -- which is
+                                // the standing hypothesis for the boot splash being stretched across the
+                                // widened frame while the text drawn over it stays 4:3.
+                                // See docs/KNOWN_ISSUES.md.
+                                static const bool fbUpDbg = std::getenv("BAR_DBG_FBUPLOAD") != nullptr;
+                                if (fbUpDbg) {
+                                    static uint32_t lastAddr = 0; static uint32_t lastRows = 0; static int32_t lastW = -1;
+                                    if ((colorImg.address != lastAddr) || (readRowCount != lastRows) || (int32_t(colorFb->width) != lastW)) {
+                                        lastAddr = colorImg.address; lastRows = readRowCount; lastW = int32_t(colorFb->width);
+                                        fprintf(stderr, "[fbupload] addr=%08X fbW=%u fbH=%u readFrom=%u rows=%u\n",
+                                            colorImg.address, colorFb->width, colorFb->height, colorFb->readHeight,
+                                            readRowCount);
+                                        fflush(stderr);
+                                    }
+                                }
                                 colorTarget->copyFromChanges(ext.workloadGraphicsWorker, *colorFbChange, colorFb->width, readRowCount, colorFb->readHeight, ext.shaderLibrary);
                             }
 

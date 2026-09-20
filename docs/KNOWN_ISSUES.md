@@ -73,8 +73,30 @@ uploaded by RT64 through `copyFromChanges` (`lib/rt64/src/hle/rt64_workload_queu
 the widened render target directly and is never aspect-compensated because it is not a draw call. The
 text tiles drawn over it afterwards ARE compensated, which is exactly the observed split.
 
-**Confirm that before writing anything** -- instrument the upload path and check whether the splash's
-colour image arrives that way. If it does, the fix is in framebuffer upload (placing RDRAM content in
+**CONFIRMED 2026-09-20, and then narrowed further.** `BAR_DBG_FBUPLOAD=1` (added for this) traces both
+ends of the upload. The splash photo *is* CPU-written framebuffer content, uploaded whole:
+
+```
+[fbupload] addr=001DA800 fbW=320 fbH=240 readFrom=0 rows=240     <- the film-roll pages
+[fbupload] addr=00200000 fbW=320 fbH=240 readFrom=0 rows=240
+```
+
+**But the upload path is NOT the bug.** `RenderTarget::copyFromChanges` already centres the content at
+4:3 when the target is widened, and the trace shows it doing exactly that. The same RDRAM content is
+uploaded into TWO targets:
+
+```
+resScale=(2.0000,2.0000)  pillarBox=0 -> left=0.0   width=640.0   (a 640-wide, 4:3 target: filled)
+resScale=(2.6688,2.0000)  pillarBox=1 -> left=107.0 width=640.0   (an 854-wide target: CORRECTLY centred)
+```
+
+So the widened target receives a properly pillarboxed copy. **The defect is in which target is
+presented or composited** -- something is presenting the 4:3 (640-wide) target stretched across the
+widened frame, and that is where to look next. Note the TODO already sitting in
+`rt64_render_target.cpp` beside the pillarbox branch ("Should it query from the FB pair somehow if it's
+an FB pair that is supposed to have aspect ratio adjustment?").
+
+Older note, kept because it is still the right instinct: If it does, the fix is in framebuffer upload (placing RDRAM content in
 the 4:3 centre of a widened target), which is core RT64 behaviour affecting every screen that uploads a
 framebuffer, not a BAR classification tweak. It needs verifying across menus and races, not just here.
 

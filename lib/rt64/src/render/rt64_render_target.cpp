@@ -303,6 +303,26 @@ namespace RT64 {
             targetTop = rowStart * resolutionScale.y + ((fbHeight * resolutionScale.y) / 2.0f) - (targetHeight / 2.0f);
         }
         
+        // BAR_DBG_FBUPLOAD=1: where RDRAM framebuffer content actually lands in the render target.
+        // This path already centres the upload at 4:3 when the target is widened (the pillarBox branch
+        // above), so if BAR's boot splash still comes out stretched, the question is whether that
+        // branch is taken at all -- i.e. whether this target's resolutionScale is widened.
+        {
+            static const bool fbUpDbg = std::getenv("BAR_DBG_FBUPLOAD") != nullptr;
+            if (fbUpDbg) {
+                const float sx = float(resolutionScale.x), sy = float(resolutionScale.y);
+                static float lastSx = -1.0f, lastSy = -1.0f, lastL = -1.0f, lastW = -1.0f; static uint32_t lastFw = 0;
+                if ((sx != lastSx) || (sy != lastSy) || (targetLeft != lastL) ||
+                    (targetWidth != lastW) || (fbWidth != lastFw)) {
+                    lastSx = sx; lastSy = sy; lastL = targetLeft; lastW = targetWidth; lastFw = fbWidth;
+                    fprintf(stderr, "[fbupload] fb=%ux%u resScale=(%.4f,%.4f) pillarBox=%d -> target left=%.1f width=%.1f (targetFullWidth=%.1f)\n",
+                        fbWidth, fbHeight, sx, sy, pillarBox ? 1 : 0,
+                        targetLeft, targetWidth, fbWidth * sx);
+                    fflush(stderr);
+                }
+            }
+        }
+
         // Record the drawing command.
         long scissorLeft = long(floor(targetLeft));
         long scissorTop = long(floor(targetTop));
