@@ -5,6 +5,65 @@ Add the negative results, not just the leads — they are the expensive part.
 
 ---
 
+## OPEN -- the boot splash (Nintendo / VW / EA) is widened instead of staying 4:3
+
+Reported by Daniel 2026-09-20: during the boot logo sequence, the **Volkswagen** splash between the
+Nintendo 64 and Electronic Arts logos is half-widescreen -- the top of the picture fills the 16:9
+frame while a band at the bottom is pillarboxed 4:3, in the same frame. The whole sequence should
+stay 4:3.
+
+**Reproducing it needs no driving.** The logos come *after* the Controller Pak prompt, which waits for
+input, so a headless run sits on the prompt forever and every captured frame is identical. Script past
+it and the sequence plays:
+
+```
+BAR_AUTOPLAY="150:0 12:8000 900:0"   # wait, tap A, wait
+BAR_NO_INTRO_SKIP=1
+BAR_SHOTS="400:<dir>/f400.png 820:<dir>/f820.png"   # 400 = Nintendo logo, 820 = VW splash
+```
+The splash **animates**, so two captures at the same frame number from differently-configured runs are
+not necessarily the same moment -- compare hashes across frames first, and only compare frames that are
+stable (780/820/860 were identical to each other).
+
+**What it is.** The photo is ONE full-screen **orthographic quad** (`ortho#28AF9716`, 1 call, 2
+triangles, scissor 0,0-320,240). Orthographic layers are widened when they cover the whole width, so
+the photo is stretched to 16:9 -- while the text tiles drawn over it are ordinary 2D texture rectangles
+(64x32, classified `center`) that stay 4:3. Hence half the frame widescreen and half not.
+
+**Ruled out, each by a headless A/B at a stable frame (byte-identical captures):**
+
+| Suspect | Switch | Result |
+|---|---|---|
+| Film-roll composition | `BAR_NO_ROLL_COMPOSE=1` | no change |
+| Framebuffer pair full height | `BAR_NO_FB_FULL_HEIGHT=1` | no change |
+| Menu framebuffer clear | `BAR_NO_MENU_CLEAR=1` | no visual change (the hash differs, the layout does not) |
+| VI-time content crop | `BAR_CONTENT_INSET=0` | no change |
+| Present fit mode | `BAR_PRESENT_FILL=Pillarbox` | no change |
+| The HUD `Stretch` path | -- | **not involved**: all 368 traced rectangles classify as `center`, none `Stretch`, so `fbPair.barMenuStretch` (`rt64_rdp.cpp:1382`) is never set |
+
+**A failed fix, and why -- do not repeat it.** A new `Class::Pillarbox` was added returning
+`G_EX_ORIGIN_CENTER`, and `ortho#28AF9716` tagged with it. The tag MATCHED (`BAR_HUD_TRACE=2` reported
+`class=7`) and the capture was **byte-identical**. The reason is that the two decisions are gated on the
+same test:
+
+* `rt64_projection_processor.cpp` -- `adjustAspectRatio = (viewportOrigin == G_EX_ORIGIN_NONE) && ...`
+  COMPENSATES the projection so content stays proportional and 4:3.
+* `rt64_framebuffer_renderer.cpp` -- `useWideViewport = (viewportOrigin == G_EX_ORIGIN_NONE) && ...`
+  is what then lets it fill the widened frame.
+
+Expressing the intent as an origin turns off **both**, and they cancel. Forcing the compensation back on
+for the new class (`|| barPillarbox`) was also byte-identical, which suggests the layer may not be
+taking the `G_EX_ASPECT_AUTO` branch at all -- **that is the next thing to check**, with `BAR_DBG_PROJ=1`
+to read `widen=` for this projection directly.
+
+**Also worth knowing:** the boot splash runs in **game state 14, the same state as the front-end
+menus**, so menu-targeted logic gated on `gameState() == 14` applies to it too. That is very likely the
+shape of the underlying problem.
+
+Cosmetic and brief, so it was parked rather than blocking a release.
+
+---
+
 ## RESOLVED -- Wicked Woods' haunted door slammed in an endless loop
 
 Reported to Daniel via GitHub 2026-09-20: crashing through the haunted door on **Wicked Woods** starts
