@@ -5,105 +5,77 @@ Add the negative results, not just the leads — they are the expensive part.
 
 ---
 
-## OPEN -- the boot splash (Nintendo / VW / EA) is widened instead of staying 4:3
+## RESOLVED -- the boot splash was half widescreen, half 4:3
 
 Reported by Daniel 2026-09-20: during the boot logo sequence, the **Volkswagen** splash between the
-Nintendo 64 and Electronic Arts logos is half-widescreen -- the top of the picture fills the 16:9
-frame while a band at the bottom is pillarboxed 4:3, in the same frame. The whole sequence should
-stay 4:3.
+Nintendo 64 and Electronic Arts logos rendered with the top of the picture filling the 16:9 frame while
+a band at the bottom stayed pillarboxed 4:3, in the same frame.
 
-**Reproducing it needs no driving.** The logos come *after* the Controller Pak prompt, which waits for
-input, so a headless run sits on the prompt forever and every captured frame is identical. Script past
-it and the sequence plays:
+**Root cause.** `rt64_framebuffer_renderer.cpp`, the per-rectangle aspect decision:
 
+```c
+const bool coversScissorWidth = (rect.ulx <= scissor.ulx) && (rect.lrx >= scissor.lrx);
+if ((tileCopiesUsed || coversScissorWidth || rectAspect == STRETCH) && (rectAspect != ADJUST)) {
+    invRatioScale = 1.0f;          // treat as a backdrop: stretch across the widened frame
+}
 ```
-BAR_AUTOPLAY="150:0 12:8000 900:0"   # wait, tap A, wait
-BAR_NO_INTRO_SKIP=1
-BAR_SHOTS="400:<dir>/f400.png 820:<dir>/f820.png"   # 400 = Nintendo logo, 820 = VW splash
-```
-The splash **animates**, so two captures at the same frame number from differently-configured runs are
-not necessarily the same moment -- compare hashes across frames first, and only compare frames that are
-stable (780/820/860 were identical to each other).
 
-**What it is.** The photo is ONE full-screen **orthographic quad** (`ortho#28AF9716`, 1 call, 2
-triangles, scissor 0,0-320,240). Orthographic layers are widened when they cover the whole width, so
-the photo is stretched to 16:9 -- while the text tiles drawn over it are ordinary 2D texture rectangles
-(64x32, classified `center`) that stay 4:3. Hence half the frame widescreen and half not.
+BAR draws the splash photo as **full-width strips six pixels tall**, one per row
+(`px=(0.0,0.0)-(320.0,6.0)`). Every strip spans the scissor, so every strip matched "this is a
+backdrop" and was stretched. The bottom of the **same picture** is drawn as 64x32 tiles, which do not
+span the width, so those were compensated and stayed 4:3. Hence half the frame widescreen and half not.
 
-**Ruled out, each by a headless A/B at a stable frame (byte-identical captures):**
+**The fix.** A slice of a picture is not a backdrop. A rectangle is stretched only if it meets **all
+four** conditions: it covers the scissor width, it is at least a quarter of the scissor height (a 6/240
+strip is 2.5%; a real backdrop covers all of it), it is **textured**, and the game is in **state 14**
+(boot/menu -- the same state `rt64_rdp.cpp:1382` keys its menu-stretch flag on). `BAR_SLICE_STRETCH=1`
+restores the upstream rule.
 
-| Suspect | Switch | Result |
+**THREE discriminators were tried before that, and Daniel found each one broken on the next screen he
+checked. Do not retry them:**
+
+| Attempt | What it fixed | What it broke |
 |---|---|---|
-| Film-roll composition | `BAR_NO_ROLL_COMPOSE=1` | no change |
-| Framebuffer pair full height | `BAR_NO_FB_FULL_HEIGHT=1` | no change |
-| Menu framebuffer clear | `BAR_NO_MENU_CLEAR=1` | no visual change (the hash differs, the layout does not) |
-| VI-time content crop | `BAR_CONTENT_INSET=0` | no change |
-| Present fit mode | `BAR_PRESENT_FILL=Pillarbox` | no change |
-| The HUD `Stretch` path | -- | **not involved**: all 368 traced rectangles classify as `center`, none `Stretch`, so `fbPair.barMenuStretch` (`rt64_rdp.cpp:1382`) is never set |
+| height only | the splash | Mount Mayhem's haze, pillarboxed mid-race |
+| `+ !racing()` | the in-race haze | the haze on the **pre-race course overview**, which is not a race either |
+| `+ tex only` (dropping `racing()`) | -- | the haze in **both** the race and the overview |
 
-**A failed fix, and why -- do not repeat it.** A new `Class::Pillarbox` was added returning
-`G_EX_ORIGIN_CENTER`, and `ortho#28AF9716` tagged with it. The tag MATCHED (`BAR_HUD_TRACE=2` reported
-`class=7`) and the capture was **byte-identical**. The reason is that the two decisions are gated on the
-same test:
-
-* `rt64_projection_processor.cpp` -- `adjustAspectRatio = (viewportOrigin == G_EX_ORIGIN_NONE) && ...`
-  COMPENSATES the projection so content stays proportional and 4:3.
-* `rt64_framebuffer_renderer.cpp` -- `useWideViewport = (viewportOrigin == G_EX_ORIGIN_NONE) && ...`
-  is what then lets it fill the widened frame.
-
-Expressing the intent as an origin turns off **both**, and they cancel. Forcing the compensation back on
-for the new class (`|| barPillarbox`) was also byte-identical, which suggests the layer may not be
-taking the `G_EX_ASPECT_AUTO` branch at all -- **that is the next thing to check**, with `BAR_DBG_PROJ=1`
-to read `widen=` for this projection directly.
-
-**THREE fixes were attempted, each verified as actually applied, each byte-identical on screen.** That
-is the most useful result here, so do not repeat them:
-
-| Attempt | Proof it applied | Result |
-|---|---|---|
-| `Class::Pillarbox` returning `G_EX_ORIGIN_CENTER`, tagged on `ortho#28AF9716` | `BAR_HUD_TRACE=2` reported `class=7` | byte-identical |
-| Keeping the projection compensation on for that class (`\|\| barPillarbox` in the processor) | `BAR_DBG_PROJ=1` reported `origin=2048 -> widen=1` | byte-identical |
-| Re-judging a full-width scissor SLICE as 4:3 in the framebuffer renderer's similarity test | `BAR_DBG_ASPECT=1` went from `320x147 ratio=2.1769 adjust=0` to `ratio=1.3333 adjust=1 scale=1.3333` | byte-identical |
-
-**What that implies, and where to start next.** Every mechanism that widens *drawn geometry* is now
-excluded by experiment. Nothing in the draw path can move this image, the `[hud]` trace only ever shows
-the small text tiles, and the single orthographic layer is a 2-triangle quad with `tex=0`. So **the photo
-is almost certainly not drawn at all** -- it is written into the framebuffer in RDRAM by the CPU and
-uploaded by RT64 through `copyFromChanges` (`lib/rt64/src/hle/rt64_workload_queue.cpp:789`), which fills
-the widened render target directly and is never aspect-compensated because it is not a draw call. The
-text tiles drawn over it afterwards ARE compensated, which is exactly the observed split.
-
-**CONFIRMED 2026-09-20, and then narrowed further.** `BAR_DBG_FBUPLOAD=1` (added for this) traces both
-ends of the upload. The splash photo *is* CPU-written framebuffer content, uploaded whole:
+The measurement that settled it, with `BAR_DBG_SLICE=1` on the overview:
 
 ```
-[fbupload] addr=001DA800 fbW=320 fbH=240 readFrom=0 rows=240     <- the film-roll pages
-[fbupload] addr=00200000 fbW=320 fbH=240 readFrom=0 rows=240
+[slice] ... height=3 scissorH=240 kind=tex state=14   <- a splash slice
+[slice] ... height=3 scissorH=240 kind=tex state=5    <- the overview/race haze
 ```
 
-**But the upload path is NOT the bug.** `RenderTarget::copyFromChanges` already centres the content at
-4:3 when the target is widened, and the trace shows it doing exactly that. The same RDRAM content is
-uploaded into TWO targets:
+**The overview's haze is a full-width TEXTURED rectangle three pixels tall -- structurally identical to
+a splash slice.** Height and kind cannot tell them apart; only the game state can. The in-race haze that
+looked correct under the `racing()` gate was the separate `fill` at height 240, which was never
+affected -- which is exactly why the kind test looked sufficient and was not.
 
-```
-resScale=(2.0000,2.0000)  pillarBox=0 -> left=0.0   width=640.0   (a 640-wide, 4:3 target: filled)
-resScale=(2.6688,2.0000)  pillarBox=1 -> left=107.0 width=640.0   (an 854-wide target: CORRECTLY centred)
-```
+**Why the automated check kept saying it was fine.** `BAR_DBG_SLICE=1` over a scripted run reported
+only `kind=tex` draws and no fills, and that was read as proof the haze was safe. It was not: the
+scripted run reaches the boot logos, the menus and the attract demo and **never reaches the course
+overview or a real race**, so the one draw that mattered was never in the sample. Daniel: *"You cant
+reach the regression with your current method: The regression is clear on the map overview screen,
+which you never reach."* An invariant proved over incomplete coverage is not the invariant claimed.
 
-So the widened target receives a properly pillarboxed copy. **The defect is in which target is
-presented or composited** -- something is presenting the 4:3 (640-wide) target stretched across the
-widened frame, and that is where to look next. Note the TODO already sitting in
-`rt64_render_target.cpp` beside the pillarbox branch ("Should it query from the FB pair somehow if it's
-an FB pair that is supposed to have aspect ratio adjustment?").
+**What took six failed attempts, and the lesson.** Every widening mechanism was attacked first --
+projection classes, the projection processor's aspect compensation, the framebuffer pair's similarity
+test, the RDRAM upload path -- because the symptom looked like "something widens the picture". The
+decision was one level below all of it, per RECTANGLE. The probe that cracked it was `BAR_SKIP_WIDE=100`,
+which blanked the entire stretched region and proved it was ordinary wide rectangles rather than
+framebuffer content. **Reach for a probe that removes a class of draws before reasoning about the
+renderer's control flow.** Refuted along the way, each verified as actually applied and each
+byte-identical on screen: `Class::Pillarbox` via `G_EX_ORIGIN_CENTER`; keeping the projection
+compensation on for it; re-judging a full-width scissor slice as 4:3; and skipping the RDRAM framebuffer
+upload and target-to-target copy entirely (`BAR_NO_FBUPLOAD`, `BAR_NO_FBCOPY`), which changed nothing and
+cleared that whole path.
 
-Older note, kept because it is still the right instinct: If it does, the fix is in framebuffer upload (placing RDRAM content in
-the 4:3 centre of a widened target), which is core RT64 behaviour affecting every screen that uploads a
-framebuffer, not a BAR classification tweak. It needs verifying across menus and races, not just here.
-
-**Also worth knowing:** the boot splash runs in **game state 14, the same state as the front-end
-menus**, so menu-targeted logic gated on `gameState() == 14` applies to it too.
-
-Cosmetic and brief, so it was parked rather than blocking a release.
+**Regression-testing gap worth knowing.** The headless frame-hash sweep could not catch either
+regression this fix caused: the attract demo drifts a frame or two between runs, so hashes cannot tell a
+real change from timing noise, and the haze needs a real race on a specific course. Daniel found both by
+eye within seconds. For a renderer rule, log which draws the rule *changes* (`BAR_DBG_SLICE`) rather than
+diffing frames.
 
 ---
 

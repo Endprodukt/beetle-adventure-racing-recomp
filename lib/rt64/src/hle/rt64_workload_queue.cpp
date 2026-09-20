@@ -769,7 +769,12 @@ namespace RT64 {
                             RenderTarget &otherColorTarget = targetManager.get(otherColorTargetKey);
                             if (!otherColorTarget.isEmpty()) {
                                 const FixedRect &r = colorFb->lastWriteRect;
-                                colorTarget->copyFromTarget(ext.workloadGraphicsWorker, &otherColorTarget, r.left(false), r.top(false), r.width(false, true), r.height(false, true), ext.shaderLibrary);
+                                // BAR_NO_FBCOPY=1: skip target-to-target copies (same probe idea as
+                                // BAR_NO_FBUPLOAD -- whatever goes blank is what this path paints).
+                                static const bool fbCopySkip = std::getenv("BAR_NO_FBCOPY") != nullptr;
+                                if (!fbCopySkip) {
+                                    colorTarget->copyFromTarget(ext.workloadGraphicsWorker, &otherColorTarget, r.left(false), r.top(false), r.width(false, true), r.height(false, true), ext.shaderLibrary);
+                                }
                                 colorFb->discardLastWrite();
                                 colorFormatUpdated = true;
                             }
@@ -803,7 +808,14 @@ namespace RT64 {
                                         fflush(stderr);
                                     }
                                 }
-                                colorTarget->copyFromChanges(ext.workloadGraphicsWorker, *colorFbChange, colorFb->width, readRowCount, colorFb->readHeight, ext.shaderLibrary);
+                                // BAR_NO_FBUPLOAD=1: skip the upload entirely. A probe, not a setting --
+                                // whatever region of the screen goes blank is the region this path
+                                // paints, which is the cheapest way to tell it apart from everything
+                                // drawn over it.
+                                static const bool fbUpSkip = std::getenv("BAR_NO_FBUPLOAD") != nullptr;
+                                if (!fbUpSkip) {
+                                    colorTarget->copyFromChanges(ext.workloadGraphicsWorker, *colorFbChange, colorFb->width, readRowCount, colorFb->readHeight, ext.shaderLibrary);
+                                }
                             }
 
                             colorFb->readHeight = colorFb->height;

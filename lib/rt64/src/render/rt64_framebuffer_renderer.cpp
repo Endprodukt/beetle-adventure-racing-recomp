@@ -1738,7 +1738,80 @@ namespace {
                             // The call's scissor spans the whole width of the framebuffer pair scissor. The rect must not be using extended origins.
                             const bool regularOrigins = (call.callDesc.rectLeftOrigin == G_EX_ORIGIN_NONE) && (call.callDesc.rectRightOrigin == G_EX_ORIGIN_NONE);
                             const bool coversScissorWidth = regularOrigins && (call.callDesc.rect.ulx <= fbPair.scissorRect.ulx) && (call.callDesc.rect.lrx >= fbPair.scissorRect.lrx);
-                            if ((tileCopiesUsed || coversScissorWidth || call.callDesc.rectAspect == G_EX_ASPECT_STRETCH) && (call.callDesc.rectAspect != G_EX_ASPECT_ADJUST)) {
+                            // BAR: a full-width rectangle is only a BACKDROP if it is also reasonably
+                            // tall. Spanning the scissor's width is upstream's whole test, and stretching
+                            // such a rect is right for a one-piece backdrop or wipe -- but BAR's boot
+                            // splash draws its photo as full-width strips SIX PIXELS TALL, one per row,
+                            // so every strip matched and was stretched across the widened frame. The
+                            // bottom of the very same picture is drawn as 64x32 tiles, which do not span
+                            // the width, so those were compensated and stayed 4:3: the top of the screen
+                            // widescreen and the bottom pillarboxed, in one frame.
+                            //
+                            // A slice of a picture is not a backdrop. Requiring a quarter of the
+                            // scissor's height separates the two cleanly: a 6/240 strip is 2.5%, while a
+                            // real full-screen backdrop covers all of it. BAR_SLICE_STRETCH=1 restores
+                            // the upstream rule.
+                            //
+                            // TEXTURED RECTANGLES ONLY. Mount Mayhem's haze is a full-width FILL that
+                            // genuinely is a backdrop and genuinely needs the stretch; so are the
+                            // cinematic letterbox bars. Applying the slice rule to those left the haze
+                            // pillarboxed mid-track, and then -- with a first attempt that keyed on
+                            // `racing()` -- still wrong on the pre-race course overview, which is not a
+                            // race either.
+                            //
+                            // Measured with BAR_HUD_TRACE=2 across the boot splash, the overview and a
+                            // race, every full-width rectangle in the game splits cleanly by KIND:
+                            //
+                            //   state 14 (splash/menus)   tex    heights 3, 4, 6     150 rects
+                            //   state 2  (attract/overview) fill heights 147, 46, 48   4 rects
+                            //   state 5  (race)           fill   height 240            1 rect
+                            //
+                            // The picture slices are the only textured ones. Keying on that is
+                            // structural rather than a guess about when a screen is shown, and it
+                            // leaves every fill-cycle backdrop in the game exactly as it was.
+                            // AND ONLY IN THE MENU/BOOT STATE (14). Kind is not enough on its own: the
+                            // pre-race course overview (state 5) draws its haze as a full-width TEXTURED
+                            // rect three pixels tall -- structurally identical to a splash slice -- and
+                            // compensating it left the haze pillarboxed there. Measured with
+                            // BAR_DBG_SLICE=1 on the overview:
+                            //
+                            //   [slice] ... height=3 scissorH=240 kind=tex state=14   <- splash slice
+                            //   [slice] ... height=3 scissorH=240 kind=tex state=5    <- overview haze
+                            //
+                            // The in-race haze is the `fill` at height 240 and was never affected, which
+                            // is why that one looked right while the overview did not. State 14 is the
+                            // boot/menu state (the same one rt64_rdp.cpp keys its menu-stretch flag on),
+                            // so restricting to it leaves races, the overview, the attract demo and the
+                            // battle mode on exactly the path they have always taken.
+                            constexpr uint32_t kBarMenuGameState = 14;
+                            static const bool barSliceStretch = (std::getenv("BAR_SLICE_STRETCH") != nullptr);
+                            const bool barFillCycle = (call.shaderDesc.otherMode.cycleType() == G_CYC_FILL);
+                            const int32_t barRectHeight = call.callDesc.rect.height(false, true);
+                            const int32_t barScissorHeight = fbPair.scissorRect.height(false, true);
+                            const bool barTallEnough = barSliceStretch || barFillCycle ||
+                                (BarHud::gameState() != kBarMenuGameState) || (barScissorHeight <= 0) ||
+                                (barRectHeight * 4 >= barScissorHeight);
+                            const bool barCoversAsBackdrop = coversScissorWidth && barTallEnough;
+
+                            // BAR_DBG_SLICE=1: every draw whose treatment this rule CHANGES -- i.e. a
+                            // full-width rect that upstream would have stretched and we now compensate.
+                            // The check that matters is that nothing but the boot splash's picture
+                            // slices ever appears here; a fill-cycle backdrop showing up would mean the
+                            // haze or the letterbox bars are about to be pillarboxed.
+                            {
+                                static const bool sliceDbg = std::getenv("BAR_DBG_SLICE") != nullptr;
+                                if (sliceDbg && coversScissorWidth && !barTallEnough) {
+                                    static std::set<uint64_t> seenSlice;
+                                    const uint64_t key = (uint64_t(uint16_t(barRectHeight)) << 32) |
+                                        (uint64_t(barFillCycle ? 1 : 0) << 16) | uint64_t(BarHud::gameState() & 0xFF);
+                                    if (seenSlice.insert(key).second && (seenSlice.size() <= 200)) {
+                                        fprintf(stderr, "[slice] compensating full-width rect: height=%d scissorH=%d kind=%s state=%u\n",
+                                            barRectHeight, barScissorHeight, barFillCycle ? "FILL" : "tex", BarHud::gameState());
+                                        fflush(stderr);
+                                    }
+                                }
+                            }
+                            if (((tileCopiesUsed && barTallEnough) || barCoversAsBackdrop || call.callDesc.rectAspect == G_EX_ASPECT_STRETCH) && (call.callDesc.rectAspect != G_EX_ASPECT_ADJUST)) {
                                 invRatioScale = 1.0f;
                             }
                             else {
