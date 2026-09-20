@@ -307,7 +307,60 @@ RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle win
     std::fprintf(stderr, "[beetle-adventure-racing-recomp] RT64 initialized (graphics api %d)\n", static_cast<int>(chosen_api));
 }
 
+// BAR_DBG_DLIST=1 -- how close each frame comes to the game's display-list budget.
+//
+// uvgfxmgr_rom allocates TWO command buffers of D_uvgfxmgr_rom_0040244C Gfx entries each, back to
+// back at 0x80300000 (uvgfxmgr_rom.c:278-281), and builds each frame with a bare `sGfxDisplayListHead++`
+// that is NEVER bounds-checked. So a frame that submits more than the buffer holds runs straight into
+// the other buffer -- still valid RDRAM, so RT64's walk-out-of-RDRAM guard never fires and nothing is
+// reported. The port's Draw Distance setting pushes the far plane to 4x by default, which submits
+// everything between the game's own 300 units and 1200, so this is the budget most at risk.
+//
+// Capacity is not a symbol we can reach (the module is relocatable), but it does not have to be: the
+// two buffers alternate frame to frame and are adjacent, so the gap between the two distinct data_ptr
+// values IS the capacity in bytes.
+static void barTraceDlistBudget(const OSTask *task) {
+    static const bool enabled = std::getenv("BAR_DBG_DLIST") != nullptr;
+    if (!enabled) {
+        return;
+    }
+
+    const uint32_t ptr = static_cast<uint32_t>(task->t.data_ptr) & 0x3FFFFFF;
+    const uint32_t bytes = static_cast<uint32_t>(task->t.data_size);
+
+    static uint32_t bufA = 0, bufB = 0, capacity = 0, peak = 0;
+    static uint32_t frames = 0, overflows = 0;
+    frames++;
+
+    if (bufA == 0) {
+        bufA = ptr;
+    } else if ((bufB == 0) && (ptr != bufA)) {
+        bufB = ptr;
+        capacity = (bufA < bufB) ? (bufB - bufA) : (bufA - bufB);
+        std::fprintf(stderr, "[dlist] buffers %08X / %08X -> capacity %u bytes (%u cmds)\n",
+                     bufA, bufB, capacity, capacity / 8);
+        std::fflush(stderr);
+    }
+
+    if (bytes > peak) {
+        peak = bytes;
+        std::fprintf(stderr, "[dlist] new peak %u bytes (%u cmds) on frame %u%s\n", peak, peak / 8, frames,
+                     ((capacity != 0) && (peak > capacity)) ? "  *** OVER BUDGET ***" : "");
+        std::fflush(stderr);
+    }
+
+    if ((capacity != 0) && (bytes > capacity)) {
+        overflows++;
+        if (overflows <= 16) {
+            std::fprintf(stderr, "[dlist] OVERFLOW frame %u: %u bytes into a %u byte buffer (%u over)\n",
+                         frames, bytes, capacity, bytes - capacity);
+            std::fflush(stderr);
+        }
+    }
+}
+
 void RT64Context::send_dl(const OSTask* task) {
+    barTraceDlistBudget(task);
     app->state->rsp->reset();
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);

@@ -81,6 +81,21 @@ std::atomic<float> gDrawDistanceSetting{ 0.0f };
 // BAR_DRAW_DIST wins when it is set, because it is the debugging override and needs to be able to
 // pin a value while the menu is being changed; otherwise the menu's Draw Distance setting decides,
 // and 4x is the fallback until one arrives.
+// Hard ceiling on the far-plane multiplier, applied to the MENU value only.
+//
+// Extending the far plane is what makes the game submit objects past its design range, and past some
+// fixed capacity it drops them -- including the player's car (docs/KNOWN_ISSUES.md). Until that is
+// fixed at its source, the safe multiplier is the game's own.
+//
+// This is capped HERE, in code, rather than only defaulted in the frontend, because a default cannot
+// reach an install that already has a graphics.json -- and that file is rewritten by the frontend from
+// its own state, so editing it by hand does not stick either. Both of those were tried and both failed
+// to take effect. Code is the only place a saved value cannot get past.
+//
+// BAR_DRAW_DIST deliberately bypasses the cap: raising the distance is exactly what a debugging run
+// needs to do, and it is how the ceiling will be re-tested once the object list is found.
+constexpr float kMaxSafeFarScale = 1.0f;
+
 float drawDistanceScale() {
     static const char *const envSet = std::getenv("BAR_DRAW_DIST");
     if (envSet != nullptr) {
@@ -88,8 +103,12 @@ float drawDistanceScale() {
         return scale;
     }
 
+    // 1x until a setting arrives. This used to be 4x, which meant the no-frontend build and every
+    // frame before the menu loads extended the far plane -- and extending it is what drops objects
+    // (see farReachesChannel below and docs/KNOWN_ISSUES.md). The safe value is the game's own.
     const float fromMenu = gDrawDistanceSetting.load(std::memory_order_relaxed);
-    return (fromMenu > 0.0f) ? fromMenu : 4.0f;
+    const float wanted = (fromMenu > 0.0f) ? fromMenu : 1.0f;
+    return (wanted > kMaxSafeFarScale) ? kMaxSafeFarScale : wanted;
 }
 
 // How much wider than its own 4:3 frustum the game should be willing to CULL against.
@@ -115,6 +134,25 @@ float cullWidenScale() {
 bool traceEnabled() {
     static const bool dbg = std::getenv("BAR_DBG_FRUSTUM") != nullptr;
     return dbg;
+}
+
+// BAR_FAR_CHANNEL=0 -- diagnostic only, NOT a shipping option.
+//
+// The scaled far plane is written to two places, and they do two different jobs. The one in the
+// projection MATRIX only widens the depth range that gets drawn. The one in the CHANNEL is what moves
+// the game's far culling plane, and so what makes the game submit objects it would otherwise have
+// skipped -- out to 4x its design range at the default setting.
+//
+// Setting this to 0 keeps the matrix write and drops the channel write, which separates "the extra
+// depth range" from "the extra submitted objects" in a single run. Draw distance stops working while
+// it is off (the game culls at its own 300 while the matrix draws to 1200), which is precisely why
+// this is a probe and not a setting.
+bool farReachesChannel() {
+    static const bool on = [] {
+        const char *e = std::getenv("BAR_FAR_CHANNEL");
+        return (e == nullptr) || (std::strcmp(e, "0") != 0);
+    }();
+    return on;
 }
 
 // Widening the channel's stored left/right is not confined to the culling planes: the game builds a
@@ -221,7 +259,7 @@ extern "C" void bar_frustum_adjust(uint8_t *rdram, unsigned dst, unsigned *l, un
         ((unsigned)MEM_W(kChanTop, chan) == *t) && ((unsigned)MEM_W(kChanBottom, chan) == *b) &&
         ((unsigned)MEM_W(kChanNear, chan) == *n) && ((unsigned)MEM_W(kChanFar, chan) == asBits(farZ));
     if (isChannel) {
-        if (wantDistance) {
+        if (wantDistance && farReachesChannel()) {
             MEM_W(kChanFar, chan) = (int32_t)asBits(newFar);
         }
         if (wantWiden) {

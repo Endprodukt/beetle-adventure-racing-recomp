@@ -204,7 +204,9 @@ report still gives module+offset, which resolves offline.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `BAR_DRAW_DIST=<n>` | 4 | Far-plane multiplier. Overrides the menu setting, so a debugging run can pin a value |
+| `BAR_DRAW_DIST=<n>` | 1 | Far-plane multiplier. Overrides the menu setting, so a debugging run can pin a value. The default dropped from 4 to 1 on 2026-09-20 — above 1 the game drops dynamic objects (see KNOWN_ISSUES.md) |
+| `BAR_FAR_CHANNEL=0` | on | **Probe, not a setting.** Keeps the far-plane write to the projection matrix but drops the one to the camera channel, separating "extra depth range drawn" from "extra objects submitted". Draw Distance stops working while it is off |
+| `BAR_DBG_DLIST=1` | off | Per-frame display-list budget: the buffer capacity (derived from the gap between the two alternating buffers) and every new peak, flagged when it exceeds capacity. The game never bounds-checks `sGfxDisplayListHead++`, so an overrun runs silently into the second buffer and trips none of RT64's guards |
 | `BAR_CULL_WIDEN=<n>` | 1.75 | How much wider than 4:3 the game culls. `1` disables |
 | `BAR_HUD_ANCHOR=0` | on | Disable HUD anchoring entirely |
 | `BAR_HUD_ORTHO=0` | on | Keep rectangles anchored but leave the speedometer needle's ortho layer centred — this is how the two halves are told apart on screen |

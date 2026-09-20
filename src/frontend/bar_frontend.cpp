@@ -101,9 +101,15 @@ void add_draw_distance_option() {
         "How far into the distance the game draws. The original hardware drew 300 units ahead; "
         "<recomp-color primary>2x</recomp-color> and <recomp-color primary>4x</recomp-color> extend "
         "that, and extend the distance the game submits geometry for to match, so scenery stops "
-        "appearing out of the fog.",
+        "appearing out of the fog. Above <recomp-color primary>1x</recomp-color> the game submits "
+        "more objects per frame than it was built for, and on long views some can be dropped "
+        "entirely - including your own car (see KNOWN_ISSUES.md).",
         kDrawDistanceOptions,
-        2u /* 4x, matching the port's default */
+        // 1x by default until the dropped-object bug above is fixed at its source. A frustum's volume
+        // grows with the CUBE of its far plane, so even 2x asks the game to consider ~8x as many
+        // objects per frame; measured on Wicked Woods, both 2x and 4x drop the player's car and nearby
+        // trees on the big jump, while 1x never does.
+        0u /* 1x */
     );
 }
 
