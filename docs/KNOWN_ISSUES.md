@@ -56,9 +56,30 @@ for the new class (`|| barPillarbox`) was also byte-identical, which suggests th
 taking the `G_EX_ASPECT_AUTO` branch at all -- **that is the next thing to check**, with `BAR_DBG_PROJ=1`
 to read `widen=` for this projection directly.
 
+**THREE fixes were attempted, each verified as actually applied, each byte-identical on screen.** That
+is the most useful result here, so do not repeat them:
+
+| Attempt | Proof it applied | Result |
+|---|---|---|
+| `Class::Pillarbox` returning `G_EX_ORIGIN_CENTER`, tagged on `ortho#28AF9716` | `BAR_HUD_TRACE=2` reported `class=7` | byte-identical |
+| Keeping the projection compensation on for that class (`\|\| barPillarbox` in the processor) | `BAR_DBG_PROJ=1` reported `origin=2048 -> widen=1` | byte-identical |
+| Re-judging a full-width scissor SLICE as 4:3 in the framebuffer renderer's similarity test | `BAR_DBG_ASPECT=1` went from `320x147 ratio=2.1769 adjust=0` to `ratio=1.3333 adjust=1 scale=1.3333` | byte-identical |
+
+**What that implies, and where to start next.** Every mechanism that widens *drawn geometry* is now
+excluded by experiment. Nothing in the draw path can move this image, the `[hud]` trace only ever shows
+the small text tiles, and the single orthographic layer is a 2-triangle quad with `tex=0`. So **the photo
+is almost certainly not drawn at all** -- it is written into the framebuffer in RDRAM by the CPU and
+uploaded by RT64 through `copyFromChanges` (`lib/rt64/src/hle/rt64_workload_queue.cpp:789`), which fills
+the widened render target directly and is never aspect-compensated because it is not a draw call. The
+text tiles drawn over it afterwards ARE compensated, which is exactly the observed split.
+
+**Confirm that before writing anything** -- instrument the upload path and check whether the splash's
+colour image arrives that way. If it does, the fix is in framebuffer upload (placing RDRAM content in
+the 4:3 centre of a widened target), which is core RT64 behaviour affecting every screen that uploads a
+framebuffer, not a BAR classification tweak. It needs verifying across menus and races, not just here.
+
 **Also worth knowing:** the boot splash runs in **game state 14, the same state as the front-end
-menus**, so menu-targeted logic gated on `gameState() == 14` applies to it too. That is very likely the
-shape of the underlying problem.
+menus**, so menu-targeted logic gated on `gameState() == 14` applies to it too.
 
 Cosmetic and brief, so it was parked rather than blocking a release.
 
