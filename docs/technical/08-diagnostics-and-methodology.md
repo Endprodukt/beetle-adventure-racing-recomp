@@ -191,7 +191,8 @@ report still gives module+offset, which resolves offline.
 | `BAR_DBG_SLIDE=1` | The menu page-transition / film-roll trace |
 | `BAR_DBG_DIV=1` | The whole-frame divider `D_8001F7C0` alongside the game state |
 | `BAR_AUDIO_DBG=1` | Peak sample magnitude and saturation count |
-| `BAR_AUDIO_CAPTURE=<path>` | Dump the raw untransformed received audio stream (~16 MB cap) for offline analysis with no device open |
+| `BAR_AUDIO_CAPTURE=<path>` | Dump the raw untransformed received audio stream for offline analysis. Playback is unaffected, so the player can still hear what is being recorded. The banner prints the sample rate, because the dump is **headerless** stereo s16 and nothing else records it |
+| `BAR_AUDIO_CAPTURE_MB=<n>` | Capture cap in MB (default 16). The capture starts at the **first audio callback**, so the budget is spent on the launcher and menus before the player reaches whatever they are recording — 16 MB is only ~2 minutes at 48 kHz, which is not enough to reach a specific spot on a specific course |
 | `BAR_HUD_TRACE=1` | Game state, race flag, whether anchoring is armed, and every 2D rectangle with the identity and class it was given. **Prefer the HUD inspector** (F1) — see below |
 | `BAR_HUD_TRACE=2` | As `1`, but prints every distinct rectangle once **including centred ones**, with its kind (`fill`/`tex`/`untex`), both identities and the game state; and every draw inside each orthographic layer once, with its screen bounds (`[hud-ortho]`), which is the only listing of geometry drawn as 2D. How the 4-player battle HUD was listed |
 | `BAR_HUD_COVER_INSET="l,t,r,b"` | The overscan-safe rectangle the `cover` class magnifies to the frame's edges; default `22,17,296,223`. Dial a backdrop in without a rebuild |

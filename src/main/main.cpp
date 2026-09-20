@@ -482,6 +482,19 @@ extern "C" bool bar_output_silenced(void) {
     return !g_window_focused.load(std::memory_order_relaxed) && g_mute_unfocused.load(std::memory_order_relaxed);
 }
 
+// How much of the stream BAR_AUDIO_CAPTURE keeps, in MB. The capture starts at the FIRST audio
+// callback, so the budget is spent on the launcher and the menus before the player reaches whatever
+// they are trying to record -- 16 MB is only about two minutes at 32 kHz stereo, which is not enough
+// to navigate to a specific spot on a specific course. BAR_AUDIO_CAPTURE_MB raises it.
+static unsigned bar_audio_capture_mb() {
+    static const unsigned mb = []{
+        const char* e = std::getenv("BAR_AUDIO_CAPTURE_MB");
+        const int v = e ? std::atoi(e) : 0;
+        return (v >= 1 && v <= 2048) ? (unsigned)v : 16u;
+    }();
+    return mb;
+}
+
 static bool bar_audio_play_enabled() {
     // Audio output ON by default; BAR_NO_AUDIO disables the device (and the ucode, see get_rsp_microcode).
     static const bool on = std::getenv("BAR_NO_AUDIO") == nullptr;
@@ -500,7 +513,10 @@ static void bar_open_audio(uint32_t freq) {
         if (!tried) { tried = true;
             const char* cap = std::getenv("BAR_AUDIO_CAPTURE");
             if (cap && *cap) { g_audio_capture = std::fopen(cap, "wb");
-                std::fprintf(stderr, "[beetle-adventure-racing-recomp] audio capture -> %s\n", cap); }
+                // The rate matters as much as the bytes: the dump is headerless stereo s16, so anything
+                // reading it back has to be told the rate, and it is the game that chooses it.
+                std::fprintf(stderr, "[beetle-adventure-racing-recomp] audio capture -> %s (%u Hz stereo s16, cap %u MB)\n",
+                             cap, (unsigned)freq, (unsigned)bar_audio_capture_mb()); }
         }
     }
     if (!bar_audio_play_enabled()) return;          // muted: never open a device, never play
@@ -524,7 +540,7 @@ static void bar_open_audio(uint32_t freq) {
 static void queue_samples(int16_t* samples, size_t count) {
     if (samples == nullptr || count == 0) return;
     // Capture the RAW received stream (no transform) for offline analysis, capped at ~16 MB.
-    if (g_audio_capture && g_audio_capture_bytes < (16u << 20)) {
+    if (g_audio_capture && g_audio_capture_bytes < ((size_t)bar_audio_capture_mb() << 20)) {
         size_t n = std::fwrite(samples, sizeof(int16_t), count, g_audio_capture);
         g_audio_capture_bytes += n * sizeof(int16_t);
     }

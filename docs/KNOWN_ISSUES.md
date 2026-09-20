@@ -5,6 +5,67 @@ Add the negative results, not just the leads — they are the expensive part.
 
 ---
 
+## RESOLVED -- Wicked Woods' haunted door slammed in an endless loop
+
+Reported to Daniel via GitHub 2026-09-20: crashing through the haunted door on **Wicked Woods** starts
+a looping "cracking" sound that never stops for the rest of the race.
+
+**This is an ORIGINAL-HARDWARE glitch**, and the decomp says so itself --
+`lib/bar-decomp/include/snd.h:193`:
+
+```c
+SLAMDOOR,   // Haunted door slamming loop (infamous glitch)
+```
+
+Daniel confirmed it reproduces on the real game, so the fix is a **deliberate divergence from the N64**,
+requested explicitly: play once, then stop. Always on, not optional.
+
+**Measured** with `BAR_AUDIO_CAPTURE` (raw 48 kHz stereo s16) rather than by ear:
+
+* A **~31.19 ms fragment repeating at 32.06 Hz**, with harmonics at 62.40 / 93.63 / 124.83 / 156.10 /
+  187.19 ms -- i.e. one short fragment looping, far shorter than any door-slam sample.
+* It **latches at a single instant** (t = 68.5 s in the capture, the moment of the crash) and never
+  recovers: discontinuity rate jumps from ~2/s to ~55/s and stays at 35-45/s for the remaining 290 s.
+* **Not** a host-side audio problem. Click positions are uniform modulo every plausible chunk size
+  (1440, 1024, 960, 512 ... all ~2.4%, i.e. flat), so the output queue, buffering and underrun handling
+  are all cleared -- which is where this would normally be chased first.
+
+**Cause and fix.** `track2` (Wicked Woods) binds the voice in its entrypoint:
+
+```
+0x847003F4: addiu $a1, $zero, 0xBE     # SfxId 190 = SLAMDOOR
+0x847003F8: addiu $a2, $zero, 0x1B58   # priority 7000
+0x84700400: addiu $a3, $zero, 0x8      # "type", fed to emitter->unk50(slot, 5, TYPE, 2, 100.0, ...)
+```
+
+**`type = 8` is unique to this sound.** The generic play path (`func_snd_00400750`) passes `0x30`, snd's
+own default is `0x18`, and DRAGONFIRE -- the other Wicked Woods ambience, bound by an identical block
+0x160 bytes later at `0x84700570`, which behaves -- uses `0x18`. `fix-recompiled.sh` rule (J) rewrites
+SLAMDOOR's type to `0x18`, matching its well-behaved neighbour. One immediate, two sites (the delay slot
+is emitted on both paths of the `jalr`), address-anchored and self-verifying.
+
+**Verified by re-measuring the same way, not by ear:**
+
+| | before | after |
+|---|---|---|
+| discontinuities | 33.3/s | **6.1/s** |
+| 2 s windows above 20 cracks/s | 174 of 204 | **3 of 42** (transient) |
+| autocorrelation @ 31.19 ms | 0.312 | **-0.087** |
+| autocorrelation @ 62.40 ms | 0.342 | **0.027** |
+| strongest period | 62.40 ms | 5.29 ms (ordinary pitch content) |
+
+Daniel confirmed on the course: the door slams **once** and does not loop.
+
+**Not verified:** whether `type` carries other meaning that matters elsewhere on this course -- only the
+door and the surrounding race were played. If something else on Wicked Woods sounds wrong, this rule is
+the first thing to revert.
+
+**Tooling added:** `BAR_AUDIO_CAPTURE_MB=<n>` raises the capture cap (was a hard 16 MB, only ~2 minutes
+at 48 kHz -- not enough to reach a specific spot on a specific course), and the capture banner now
+prints the sample rate, since the dump is headerless.
+
+---
+
 ## OPEN (mitigated, cause UNKNOWN) -- extending the far plane drops dynamic objects on Wicked Woods
 
 Reported by Daniel 2026-09-20: on **Wicked Woods**, on one of the big jumps, the player's car vanishes

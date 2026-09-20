@@ -294,6 +294,42 @@ require "$(count_in_funcs 'bar_rumble_dbg_addrs(ADD32')" 1 \
 require "$(count_in_funcs 'status |= PFS_INITIALIZED')" 2 \
     "rumble probe restores the Controller Pak OSPfs status (live, not inside a comment)" "rule I fix block"
 
+# (J) Wicked Woods' haunted door: stop the slam looping forever.
+#
+# An ORIGINAL-HARDWARE glitch, annotated as such in the decomp itself
+# (lib/bar-decomp/include/snd.h:193 -- `SLAMDOOR, // Haunted door slamming loop (infamous glitch)`).
+# Crashing through the door latches a looping sound that never stops. Measured from a capture
+# (BAR_AUDIO_CAPTURE): a ~31.19 ms fragment repeating at 32.06 Hz, with harmonics at 62.40 / 93.63 /
+# 124.83 / 156.10 / 187.19 ms, latching at one instant and still going 290 s later. Deliberately
+# diverging from the N64 here, at Daniel's request: play once, then stop.
+#
+# track2 (Wicked Woods) binds the voice in its entrypoint:
+#
+#     0x847003F4: addiu $a1, $zero, 0xBE     # SfxId 190 = SLAMDOOR
+#     0x847003F8: addiu $a2, $zero, 0x1B58   # priority 7000
+#     0x84700400: addiu $a3, $zero, 0x8      # <-- "type", fed to emitter->unk50(slot, 5, TYPE, ...)
+#
+# **8 is unique to this sound.** The generic play path passes 0x30, snd's own default is 0x18, and
+# DRAGONFIRE -- the other Wicked Woods ambience, which behaves -- is bound 0x160 bytes later with
+# exactly the same shape and type 0x18 (0x84700570). The one sound with an odd type is the one that
+# never stops, so this matches it to its neighbour.
+#
+# Anchored on the instruction address; the immediate appears twice because the delay slot is emitted
+# on both paths of the jalr, and both are rewritten.
+for f in "$RF"/*.c; do
+    awk '
+        /\/\/ 0x84700400:/ { armed=1; print; next }
+        armed && /ctx->r7 = ADD32\(0, 0X8\);/ {
+            sub(/ADD32\(0, 0X8\);/, "ADD32(0, 0X18); /* BAR: SLAMDOOR one-shot, was type 8 */")
+            armed=0; print; next
+        }
+        { armed=0; print }
+    ' "$f" > "$f.tmp"
+    if ! cmp -s "$f" "$f.tmp"; then mv "$f.tmp" "$f"; else rm -f "$f.tmp"; fi
+done
+require "$(count_in_funcs 'BAR: SLAMDOOR one-shot')" 2 \
+    "Wicked Woods haunted-door slam plays once (type 8 -> 0x18)" "// 0x84700400: followed by ctx->r7 = ADD32(0, 0X8);"
+
 # ---------------------------------------------------------------------------------------------
 if [ "$FAILURES" -ne 0 ]; then
     echo "" >&2
