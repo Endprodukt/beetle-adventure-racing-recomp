@@ -350,6 +350,9 @@ Hand Brake, Z is Abort, and Start is Pause / Start. Other N64 inputs are omitted
 editor; menu inputs remain visible. Stored input IDs and the controller editor do not change.
 Raw joystick binding slots use a smaller text font and a shortened device name to fit two
 bindings in each row; the full device name remains in the binding data and the slot title.
+Wheel scanning also accepts SDL keydown events into the same profile as raw wheel inputs;
+Escape cancels the scan. The runtime's input readers already evaluate keyboard fields in
+controller profiles, so a wheel action can be bound to a key in either slot.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
