@@ -126,8 +126,9 @@ namespace recompui {
         pressed_callbacks.push_back(std::move(callback));
     }
 
-    void BindingButton::set_binding(const std::string &binding, bool plain_text) {
+    void BindingButton::set_binding(const std::string &binding, bool plain_text, const std::string &device_name) {
         this->mapped_binding = binding;
+        set_attribute("title", device_name);
         bound_text_el->set_font_family(plain_text ? recompui::get_primary_font_family() : "promptfont");
         bound_text_el->set_font_size(plain_text ? 18.0f : 32.0f);
         bound_text_el->set_line_height(plain_text ? 20.0f : 32.0f);
