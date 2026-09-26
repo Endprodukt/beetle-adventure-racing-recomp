@@ -416,6 +416,11 @@ The file is created as soon as the host starts with `BAR_DBG_LAYOUT=1`.
 These are observation ranges, not confirmed
 field sizes. Compare the trace after loading the save and after switching away and back;
 do not force a layout value until that transition is measured.
+In the reported first-race/after-cycling comparison, both races show menu and active layout
+`02`, identical 72-byte `gCustomButtonMap` content, and button events at the SI response.
+Thus these sampled globals and host input do not explain the difference. The generated game
+functions that access those addresses can be located without a new game run using
+`py scripts/find-layout-references.py > layout-code.txt` on a machine with `RecompiledFuncs/`.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
