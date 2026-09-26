@@ -359,8 +359,17 @@ the profile, so it never holds an SDL joystick pointer that the event thread cou
 disconnect. At each event-pump pass, unmapped devices are also opened by enumeration: an early
 `JOYDEVICEADDED` event is not a reliable prerequisite after SDL has already initialized. The
 `[recompinput] raw joystick opened` line confirms that a wheel/pedal/shifter can produce raw
-button and axis events for assignment. This path handles input only; it does not implement force
-feedback.
+button and axis events for assignment. The event thread also owns the haptic handle, selecting
+the physical joystick identified by a Wheel Left/Right axis binding when player one selects the
+Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_HapticQuery` selects
+autocenter or a spring condition effect, and initializes simple rumble only when supported. BAR's
+existing pulse-density motor model supplies the rumble magnitude after the General Rumble Strength
+setting; the Wheel editor's Game Rumble percentage scales that magnitude again. Both the Center
+Spring and Game Rumble percentages live in `controls.json` under `wheel_ffb`, defaulting to 20%
+and 50% respectively; zero disables its effect. Unsupported effects are reported once in the
+`[wheel-ffb]` log and do not affect the input bindings. The haptic device is never selected by a
+pedal, shifter, vJoy button, or player assignment. This first implementation serves player one;
+hardware force feedback behavior still requires measurement on an actual wheel.
 
 The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
 are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
