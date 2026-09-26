@@ -391,9 +391,11 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
         // which is reset whenever the game state changes.
         static int32_t lastState = -0x7FFF;
         static bool sawSetup = false;
+        static bool sawHumanRacing = false;
         if (st != lastState) {
             lastState = st;
             sawSetup = false;
+            sawHumanRacing = false;
         }
         if ((phase == 1) || (phase == 3)) {
             sawSetup = true;
@@ -420,10 +422,16 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
         for (int i = 0; (i < numPlayers) && (i < 4); i++) {
             humanRacing |= (MEM_BU(0X98 + i, GS) != 0);
         }
+        if ((st == 5) && sawSetup && (phase == 0) && humanRacing) sawHumanRacing = true;
         bar_rt64_set_hud_anchor(((st == 5) && sawSetup && ((phase == 0) || (phase == 3)) && (replay == 0) && humanRacing) ? 1 : 0);
 #ifdef BEETLE_ENABLE_FRONTEND
+        // The per-car bytes are inferred from traces, not a decoded input gate.
+        // Some races never publish a nonzero human byte; treating that as a menu
+        // discards Wheel B (Hand Brake) and replaces it with Game Menu Back.
+        // Once a race did publish one, still use its transition to protect the
+        // results screen's in-game menu from the driving bindings.
         bar::frontend::set_wheel_driving_state((st == 5) && sawSetup && (phase == 0 || phase == 3) &&
-                                                (replay == 0) && humanRacing && (paused == 0));
+                                                (replay == 0) && (!sawHumanRacing || humanRacing) && (paused == 0));
 #endif
         bar_rt64_set_game_state((unsigned int)st);
         bar_rt64_set_hud_paused((paused != 0) ? 1 : 0);
