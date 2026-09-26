@@ -72,6 +72,20 @@ host app but **cannot** build MIPS patches (use Homebrew LLVM 18.x for those).
    route (CLion bug CPP-18848) — the Ninja + clang-cl setup above sidesteps it.
 4. Open the project folder → CLion configures CMake → build the **beetle-adventure-racing-recomp** target.
 
+## Build — Visual Studio 2022
+
+Install the **Desktop development with C++** workload, the **C++ Clang tools for Windows**
+component and a Windows 10/11 SDK in Visual Studio Installer. Open the repository root with
+**File → Open → Folder** (not a solution inside `lib/`). The root `CMakePresets.json` selects
+Ninja, x64, Release and `clang-cl`; choose **Windows x64 Release (clang-cl)** in the configuration
+dropdown and **Build game (x64 Release)** in the build preset dropdown. Visual Studio configures
+the folder, then **Build → Build All** builds the executable in
+`out/build/windows-clang-release/`. `RecompiledFuncs/` must already exist from the one-time setup.
+
+If Visual Studio reports that `clang-cl` cannot be found, install the Clang component above and
+restart Visual Studio. A failed command-line `build-wheel` cache is separate from this preset's
+build directory and is not used by the IDE.
+
 ## Build — command line (from an "x64 Native Tools Command Prompt")
 ```bash
 cmake -S . -B build-cmake -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release

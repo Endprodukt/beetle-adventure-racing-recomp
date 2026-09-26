@@ -1,0 +1,38 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-clang-release",
+      "displayName": "Windows x64 Release (clang-cl)",
+      "description": "Build Beetle Adventure Racing with the supported clang-cl/Ninja toolchain in Visual Studio.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "environment": {
+        "CC": "clang-cl",
+        "CXX": "clang-cl"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": ["Windows"],
+          "intelliSenseMode": "windows-clang-x64"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-clang-release",
+      "displayName": "Build game (x64 Release)",
+      "configurePreset": "windows-clang-release",
+      "targets": ["beetle-adventure-racing-recomp"],
+      "jobs": 8
+    }
+  ]
+}
