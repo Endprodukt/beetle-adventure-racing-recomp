@@ -270,7 +270,15 @@ std::string recompinput::InputField::to_string() const {
     default:
         return recompinput::unknown_device_input;
     }
-    return (device_name.empty() ? std::string("Joystick") : device_name) + ": " + wheel_label;
+    // Keep the device recognizable without allowing long USB product names to
+    // overflow the two compact binding slots. The full name is retained in the
+    // binding itself and exposed as the field's title in the Controls page.
+    std::string short_name = device_name.empty() ? "Joystick" : device_name;
+    if (short_name.size() > 11) {
+        short_name.resize(10);
+        short_name += "…";
+    }
+    return short_name + ": " + wheel_label;
 }
 
 };
