@@ -37,6 +37,7 @@ namespace recompinput {
     bool get_input_digital(int controller_num, const std::span<const InputField> fields);
     // Returns -1 for another device/input, otherwise the raw event's binding strength.
     float wheel_event_binding_value(const SDL_Event& event, const InputField& field);
+    bool is_raw_joystick_hat_event(const SDL_Event& event);
     void get_gyro_deltas(int controller_num, float* x, float* y);
     void get_mouse_deltas(float* x, float* y);
     void get_right_analog(int controller_num, float* x, float* y);
