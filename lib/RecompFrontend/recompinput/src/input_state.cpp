@@ -2,6 +2,7 @@
 #include <mutex>
 #include <span>
 #include <atomic>
+#include <memory>
 
 #include "recompinput/recompinput.h"
 #include "recompinput/input_state.h"
@@ -10,6 +11,40 @@
 #include "recompui/config.h"
 
 using namespace recompinput;
+
+namespace {
+struct WheelDeviceState {
+    std::string guid, serial, path;
+    std::vector<Uint8> buttons, hats;
+    std::vector<Sint16> axes;
+};
+
+// SDL joystick handles belong to the event/poll thread. The game reads input from another
+// thread, so publish a complete immutable sample rather than using SDL handles there.
+std::atomic<std::shared_ptr<const std::vector<WheelDeviceState>>> wheel_devices;
+
+void sample_wheel_devices() {
+    auto next = std::make_shared<std::vector<WheelDeviceState>>();
+    for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+        SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+        if (!joystick || !SDL_JoystickGetAttached(joystick)) continue;
+        WheelDeviceState state;
+        char guid[33]{};
+        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+        state.guid = guid;
+        if (const char* serial = SDL_JoystickGetSerial(joystick)) state.serial = serial;
+        if (const char* path = SDL_JoystickPath(joystick)) state.path = path;
+        for (int b = 0, n = SDL_JoystickNumButtons(joystick); b < n; ++b)
+            state.buttons.push_back(SDL_JoystickGetButton(joystick, b));
+        for (int h = 0, n = SDL_JoystickNumHats(joystick); h < n; ++h)
+            state.hats.push_back(SDL_JoystickGetHat(joystick, h));
+        for (int a = 0, n = SDL_JoystickNumAxes(joystick); a < n; ++a)
+            state.axes.push_back(SDL_JoystickGetAxis(joystick, a));
+        next->push_back(std::move(state));
+    }
+    wheel_devices.store(std::move(next), std::memory_order_release);
+}
+}
 
 template <typename T>
 using InputArray = std::array<T, max_num_players_supported>;
@@ -32,6 +67,7 @@ static struct {
 } InputState;
 
 void recompinput::poll_inputs() {
+    sample_wheel_devices();
     InputState.keys = SDL_GetKeyboardState(&InputState.numkeys);
     InputState.keymod = SDL_GetModState();
     static bool first_poll = true;
@@ -204,41 +240,39 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
     return false;
 }
 
-static SDL_Joystick* find_wheel_device(const InputField& field) {
+static const WheelDeviceState* find_wheel_device(const InputField& field,
+                                                 const std::vector<WheelDeviceState>& devices) {
     if (field.device_guid.empty()) return nullptr;
-    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
-        if (!joystick) continue;
-        char guid[33]{};
-        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
-        if (field.device_guid != guid) continue;
+    for (const auto& device : devices) {
+        if (field.device_guid != device.guid) continue;
         if (!field.device_serial.empty()) {
-            const char* serial = SDL_JoystickGetSerial(joystick);
-            if (!serial || field.device_serial != serial) continue;
+            if (field.device_serial != device.serial) continue;
         } else if (!field.device_path.empty()) {
-            const char* path = SDL_JoystickPath(joystick);
-            if (!path || field.device_path != path) continue;
+            if (field.device_path != device.path) continue;
         }
-        return joystick;
+        return &device;
     }
     return nullptr;
 }
 
 static float wheel_input_state(const InputField& field) {
-    SDL_Joystick* joystick = find_wheel_device(field);
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return 0.0f;
+    const WheelDeviceState* joystick = find_wheel_device(field, *snapshot);
     if (!joystick) return 0.0f;
     switch (field.input_type) {
     case InputType::JoystickButton:
-        return field.input_id >= 0 && field.input_id < SDL_JoystickNumButtons(joystick) &&
-            SDL_JoystickGetButton(joystick, field.input_id) ? 1.0f : 0.0f;
+        return field.input_id >= 0 && (size_t)field.input_id < joystick->buttons.size() &&
+            joystick->buttons[field.input_id] ? 1.0f : 0.0f;
     case InputType::JoystickHat:
-        return field.input_id >= 0 && field.input_id / 16 < SDL_JoystickNumHats(joystick) &&
-            (SDL_JoystickGetHat(joystick, field.input_id / 16) & (field.input_id % 16)) == (field.input_id % 16)
+        return field.input_id >= 0 && (size_t)(field.input_id / 16) < joystick->hats.size() &&
+            (joystick->hats[field.input_id / 16] & (field.input_id % 16)) == (field.input_id % 16)
             ? 1.0f : 0.0f;
     case InputType::JoystickAxis: {
-        int axis = std::abs(field.input_id) - 1;
-        if (axis < 0 || axis >= SDL_JoystickNumAxes(joystick)) return 0.0f;
-        const int raw = SDL_JoystickGetAxis(joystick, axis);
+        if (field.input_id == INT32_MIN) return 0.0f;
+        const int axis = std::abs(field.input_id) - 1;
+        if (axis < 0 || (size_t)axis >= joystick->axes.size()) return 0.0f;
+        const int raw = joystick->axes[axis];
         const int range = field.input_id < 0 ? field.axis_rest + 32768 : 32767 - field.axis_rest;
         if (range <= 0) return 0.0f;
         const float value = (field.input_id < 0 ? field.axis_rest - raw : raw - field.axis_rest) / (float)range;
