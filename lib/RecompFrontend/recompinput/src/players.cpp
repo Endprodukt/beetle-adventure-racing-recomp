@@ -174,9 +174,10 @@ void players::auto_assign_controllers(SDL_GameController* const* controllers, si
         Player &player = PlayerState.players[i];
         if (player.controller != nullptr) {
             int cont_profile_index = profiles::get_controller_profile_index_from_sdl_controller(player.controller);
-            if (cont_profile_index >= 0) {
-                profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
-            }
+            // SDL can enumerate a controller before its device-specific profile is registered.
+            // Keep it playable with the default controller map until that profile arrives.
+            if (cont_profile_index < 0) cont_profile_index = profiles::get_sp_controller_profile_index();
+            profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
         }
     }
 
@@ -225,6 +226,7 @@ void playerassignment::commit_player_assignment() {
         int kb_profile_index = -1;
         if (player.controller != nullptr) {
             cont_profile_index = profiles::get_controller_profile_index_from_sdl_controller(player.controller);
+            if (cont_profile_index < 0) cont_profile_index = profiles::get_sp_controller_profile_index();
             if (i == 0 && !keyboard_taken) {
                 kb_profile_index = profiles::get_sp_keyboard_profile_index();
             }
