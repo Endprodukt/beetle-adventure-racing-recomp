@@ -335,18 +335,9 @@ void bar::frontend::install() {
         trace("no saved graphics settings; defaulting to fullscreen at the display's size");
     }
 
-    // Input bindings. This is what makes the menus DRIVEABLE, and nothing else calls it:
-    // load_controls_config() is the only public entry point that reaches
-    // profiles::initialize_input_bindings(), which builds the key/button -> menu-action mapping
-    // recompui navigates with. Without it the UI still renders and RmlUi still highlights on hover
-    // (its own hit-testing), but no key or button maps to Accept/Back/navigate, so nothing can be
-    // activated — the menu looks alive and is completely inert.
-    //
-    // The call also seeds sensible keyboard and controller defaults when the file does not exist
-    // yet, and writes controls.json alongside the other config files.
-    const std::filesystem::path controls_path = recomp::get_config_path() / "controls.json";
-    const bool loaded = recompinput::profiles::load_controls_config(controls_path);
-    trace(loaded ? "controls config loaded" : "controls config created from defaults");
+    // finalize() above also loads controls.json and initializes the menu bindings.
+    // Loading a second time here resets player one's active profile after restoring
+    // wheel_players, which can leave the Wheel UI and live game input out of sync.
 
     trace("install: done");
 }
