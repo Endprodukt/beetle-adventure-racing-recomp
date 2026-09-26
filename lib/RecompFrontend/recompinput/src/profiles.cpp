@@ -39,6 +39,8 @@ static int controller_sp_profile_index = -1;
 static int wheel_profile_index = -1;
 static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
 static std::atomic_bool wheel_driving_state{false};
+static std::atomic_int wheel_center_strength{20};
+static std::atomic_int wheel_rumble_strength{50};
 
 static const std::string keyboard_sp_profile_key = "keyboard_sp";
 static const std::string controller_sp_profile_key = "controller_sp";
@@ -463,6 +465,15 @@ namespace recompinput {
         wheel_driving_state.store(driving, std::memory_order_relaxed);
     }
 
+    int profiles::get_wheel_center_strength() { return wheel_center_strength.load(std::memory_order_relaxed); }
+    int profiles::get_wheel_rumble_strength() { return wheel_rumble_strength.load(std::memory_order_relaxed); }
+    void profiles::set_wheel_center_strength(int percent) {
+        wheel_center_strength.store(std::clamp(percent, 0, 100), std::memory_order_relaxed);
+    }
+    void profiles::set_wheel_rumble_strength(int percent) {
+        wheel_rumble_strength.store(std::clamp(percent, 0, 100), std::memory_order_relaxed);
+    }
+
     static void add_input_bindings(json& out, int profile_index, GameInput input) {
         const std::string& input_name = recompinput::get_game_input_enum_name(input);
         json& out_array = out[input_name];
@@ -480,6 +491,8 @@ namespace recompinput {
         config_json["profiles"] = std::vector<json>(profile_count);
         config_json["controllers"] = std::vector<json>(controller_count);
         config_json["wheel_players"] = wheel_selected;
+        config_json["wheel_ffb"] = { {"center_spring", get_wheel_center_strength()},
+                                      {"game_rumble", get_wheel_rumble_strength()} };
 
         json &profiles = config_json["profiles"];
         for (int i = 0; i < profile_count; i++) {
@@ -582,6 +595,12 @@ namespace recompinput {
 
         auto version_it = config_json.find("version");
         if (version_it != config_json.end()) {
+            if (auto ffb = config_json.find("wheel_ffb"); ffb != config_json.end() && ffb->is_object()) {
+                if (auto v = ffb->find("center_spring"); v != ffb->end() && v->is_number_integer())
+                    set_wheel_center_strength(v->get<int>());
+                if (auto v = ffb->find("game_rumble"); v != ffb->end() && v->is_number_integer())
+                    set_wheel_rumble_strength(v->get<int>());
+            }
             if (auto selected = config_json.find("wheel_players"); selected != config_json.end() && selected->is_array()) {
                 for (size_t i = 0; i < wheel_selected.size() && i < selected->size(); ++i) {
                     if ((*selected)[i].is_boolean()) wheel_selected[i] = (*selected)[i].get<bool>();
