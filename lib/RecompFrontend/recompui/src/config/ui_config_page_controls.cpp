@@ -521,6 +521,9 @@ void ConfigPageControls::on_select_player_profile(int player_index, int profile_
         recompinput::profiles::set_input_profile_for_player(player_index, profile_index, device);
         force_update();
     }
+    // Persist the selected Wheel/player pairing immediately, even if the game
+    // starts or exits before the Controls tab is closed.
+    recompinput::profiles::save_controls_config(recomp::get_config_path() / (config::controls::id + ".json"));
 }
 
 void ConfigPageControls::on_edit_player_profile(int player_index) {
