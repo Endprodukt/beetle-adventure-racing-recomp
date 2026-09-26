@@ -267,6 +267,14 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_KEYDOWN:
     {
         SDL_KeyboardEvent* keyevent = &event->key;
+        if (profiles::is_wheel_selected(0) && !binding::is_binding() && !keyevent->repeat) {
+            static int wheel_key_logs = 0;
+            if (wheel_key_logs++ < 100) {
+                wheel_debug_log("[wheel-key] " +
+                                std::string(SDL_GetScancodeName(keyevent->keysym.scancode)) +
+                                " scancode=" + std::to_string(keyevent->keysym.scancode));
+            }
+        }
 
         // Skip repeated events when not in the menu
         if (!recompui::is_context_capturing_input() &&
@@ -348,7 +356,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 SDL_Joystick* source = SDL_JoystickFromInstanceID(event->jbutton.which);
                 const char* name = source ? SDL_JoystickName(source) : nullptr;
                 wheel_debug_log("[wheel-button] " + std::string(name ? name : "disconnected") +
-                                " button " + std::to_string(event->jbutton.button));
+                                " Button " + std::to_string((int)event->jbutton.button + 1) +
+                                " (SDL " + std::to_string(event->jbutton.button) + ")");
             }
         }
         if (binding::is_wheel_being_bound()) {
