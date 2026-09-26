@@ -354,10 +354,7 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
                   length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
               std::fprintf(stderr, "%s\n", line);
               std::fflush(stderr);
-              static bool first_line = true;
-              std::ofstream out(recomp::get_config_path() / "layout-trace.log",
-                                first_line ? std::ios::trunc : std::ios::app);
-              first_line = false;
+              std::ofstream out(recomp::get_config_path() / "layout-trace.log", std::ios::app);
               if (out) out << line << '\n';
           }
       } }
