@@ -419,6 +419,14 @@ binding transition identifies an unmatched
 device or button; `binding=1` with `Z_out=0` in a race identifies the race/menu classification;
 `Z_out=1` confirms that the Wheel scheme's hand-brake bit leaves the Wheel profile. `B_out`
 continues to show the game's Back button outside a race.
+The 2026-09-26 Wheel trace showed a separate binding overlap: Button 8 emitted `8004`
+(A + C-Down), and Button 12 emitted `0003` (C-Left + C-Right), even though the editor
+shows only Mirror and Horn for those inputs. Older Wheel configs can retain C-Down and
+C-Left assignments after those actions were hidden from its editor. The Wheel-only N64
+button reader now ignores these two invisible action mappings, leaving visible Wheel
+actions, keyboard bindings, and ordinary controller profiles intact. The same trace showed
+Button 10 (the visible Abort binding) emitting B after the driving B/Z swap, with no
+reported Abort effect. The correct in-game Abort N64 bit remains unverified.
 `[wheel-button]` now prints the one-based button number shown in the editor and the zero-based
 SDL ID in parentheses. `[wheel-key]` records SDL key-down scancodes, while `[wheel-output]`
 records the Wheel-profile and keyboard-profile N64 masks separately on each transition.
