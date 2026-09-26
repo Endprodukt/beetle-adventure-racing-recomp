@@ -361,10 +361,13 @@ disconnect. At each event-pump pass, unmapped devices are also opened by enumera
 `[recompinput] raw joystick opened` line confirms that a wheel/pedal/shifter can produce raw
 button and axis events for assignment. The event thread also owns the haptic handle, selecting
 the physical joystick identified by a Wheel Left/Right axis binding when player one selects the
-Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_HapticQuery` selects
-autocenter or a spring condition effect, and initializes simple rumble only when supported. BAR's
+Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_HapticQuery` first
+tries a position-dependent spring condition on SDL's steering axis, falling back to autocenter
+if that effect cannot start. It initializes simple rumble only when supported and logs failed
+spring/rumble operations instead of trusting a capability flag. BAR's
 existing pulse-density motor model supplies the rumble magnitude after the General Rumble Strength
-setting; the Wheel editor's Game Rumble percentage scales that magnitude again. Both the Center
+setting; the wheel output applies a capped `1.5 × level^0.4` curve to lift faint pulses, then
+applies the Wheel editor's Game Rumble percentage. Both the Center
 Spring and Game Rumble percentages live in `controls.json` under `wheel_ffb`, defaulting to 20%
 and 50% respectively; zero disables its effect. Unsupported effects are reported once in the
 `[wheel-ffb]` log and do not affect the input bindings. The haptic device is never selected by a
@@ -388,14 +391,19 @@ commands. The Wheel profile therefore adds three *virtual* inputs: Game Menu Con
 Game Menu Back (B) and Game Menu Start. They are persisted in `controls.json` with the other
 bindings but are not direct N64 buttons. At the SI hook, `gGameSettings` supplies the same
 `currentGameState`/`raceState`/`introReplayState`/per-car-racing fields used by HUD anchoring,
-plus `pauseFlag` at +0x86. Only state 5 after setup, phase 0 or 3, replay 0, a human still
-racing and pause flag clear counts as driving. The hook publishes that decision before serving
+plus `pauseFlag` at +0x86. State 5 after setup, phase 0 or 3, replay 0 and pause flag clear
+counts as driving; after a human racing byte has been observed in that state, its later clearing
+also ends driving. The earlier assumption that the inferred per-car bytes must already be
+nonzero in every active race could classify an entire race as a menu and replace Wheel Hand
+Brake B with Game Menu Back. The hook publishes that decision before serving
 the button poll. In `profiles::get_n64_input`, a selected Wheel profile replaces its own A/B/Start
 bits with the new virtual bindings outside driving, provided the respective new input has at
 least one assignment. Unassigned new inputs retain the old A/B/Start behavior for existing
 profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
 profiles are unchanged. This classification inherits the HUD's measured race-state assumptions;
 an in-game transition around the first or last racing frame still needs a live game test.
+Set `BAR_WHEEL_INPUT_TRACE=1` to log the sampled Wheel B binding and driving flag on a press;
+this distinguishes a missed SDL binding from a race/menu classification fault.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
