@@ -404,7 +404,10 @@ profiles are unchanged. This classification inherits the HUD's measured race-sta
 an in-game transition around the first or last racing frame still needs a live game test.
 Until the Hand Brake path is confirmed on hardware, `[wheel-button]` logs raw button-down events
 (up to 100 per launch) and `[wheel-brake]` logs binding/menu-back transitions, the driving flag
-and the outgoing B bit. A button-down without a binding transition identifies an unmatched
+and the outgoing B bit. Release builds use the Windows subsystem and have no stderr console;
+both line types are also saved to `<app config>/wheel-input.log` (the same directory as
+`controls.json`), truncated at the first diagnostic line on each run. A button-down without a
+binding transition identifies an unmatched
 device or button; `binding=1` with `B_out=0` identifies the race/menu classification; `B_out=1`
 confirms that the N64 B bit leaves the Wheel profile.
 
