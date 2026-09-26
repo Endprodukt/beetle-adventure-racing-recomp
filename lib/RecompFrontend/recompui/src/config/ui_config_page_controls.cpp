@@ -6,6 +6,7 @@
 #include "elements/ui_container.h"
 #include "elements/ui_binding_button.h"
 #include "elements/ui_select.h"
+#include "elements/ui_slider.h"
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
 
@@ -405,8 +406,32 @@ void ConfigPageControls::render_body_mappings() {
     // right side
     {
         body->get_right()->clear_children();
+        body->get_right()->set_flex_direction(FlexDirection::Column);
         description_container = context.create_element<Element>(body->get_right(), 0, "p", true);
         description_container->set_text("");
+
+        if (selected_profile_index == recompinput::profiles::get_wheel_profile_index()) {
+            auto add_ffb_slider = [&](const char* label, int value, void (*set_value)(int)) {
+                auto heading = context.create_element<Label>(body->get_right(), label, theme::Typography::LabelMD);
+                heading->set_margin_top(24.0f);
+                auto slider = context.create_element<Slider>(body->get_right(), SliderType::Percent);
+                slider->set_width(100.0f, Unit::Percent);
+                slider->set_min_value(0);
+                slider->set_max_value(100);
+                slider->set_step_value(1);
+                slider->set_value(value);
+                slider->add_value_changed_callback([set_value](double percent) {
+                    set_value(static_cast<int>(percent));
+                });
+            };
+            add_ffb_slider("Center Spring", recompinput::profiles::get_wheel_center_strength(),
+                           recompinput::profiles::set_wheel_center_strength);
+            add_ffb_slider("Game Rumble", recompinput::profiles::get_wheel_rumble_strength(),
+                           recompinput::profiles::set_wheel_rumble_strength);
+            auto hint = context.create_element<Label>(body->get_right(),
+                "FFB device: the physical wheel bound to Wheel Left or Wheel Right.", theme::Typography::LabelSM);
+            hint->set_margin_top(16.0f);
+        }
     }
 }
 
