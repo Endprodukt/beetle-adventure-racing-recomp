@@ -126,7 +126,12 @@ void GameInputRow::update_bindings(BindingList &new_bindings) {
         // skip update if no changes
         if (
             new_bindings[i].input_id == bindings[i].input_id &&
-            new_bindings[i].input_type == bindings[i].input_type) {
+            new_bindings[i].input_type == bindings[i].input_type &&
+            new_bindings[i].device_guid == bindings[i].device_guid &&
+            new_bindings[i].device_serial == bindings[i].device_serial &&
+            new_bindings[i].device_path == bindings[i].device_path &&
+            new_bindings[i].axis_rest == bindings[i].axis_rest &&
+            new_bindings[i].device_name == bindings[i].device_name) {
             continue;
         }
 
@@ -442,16 +447,26 @@ void ConfigPageControls::render_body_players() {
 }
 
 void ConfigPageControls::on_select_player_profile(int player_index, int profile_index) {
-    auto& assigned_player = recompinput::players::get_player(player_index);
     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+    recompinput::profiles::set_wheel_selected(player_index, profile_index == recompinput::profiles::get_wheel_profile_index());
+    if (profile_index == recompinput::profiles::get_wheel_profile_index()) {
+        device = recompinput::InputDevice::Controller;
+    } else if (device == recompinput::InputDevice::Keyboard) {
+        // Leaving Wheel restores the normal keyboard profile.
+        recompinput::profiles::set_input_profile_for_player(player_index, -1, recompinput::InputDevice::Controller);
+    }
     if (device != recompinput::InputDevice::COUNT) {
         recompinput::profiles::set_input_profile_for_player(player_index, profile_index, device);
+        force_update();
     }
 }
 
 void ConfigPageControls::on_edit_player_profile(int player_index) {
     selected_player = player_index;
     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+    if (recompinput::profiles::is_wheel_selected(player_index)) {
+        device = recompinput::InputDevice::Controller;
+    }
     if (device != recompinput::InputDevice::COUNT) {
         selected_profile_index = recompinput::profiles::get_input_profile_for_player(player_index, device);
         multiplayer_view_mappings = true;
@@ -630,6 +645,9 @@ void ConfigPageControls::update_control_mappings() {
 
 recompinput::InputDevice ConfigPageControls::get_player_input_device() {
     if (multiplayer_enabled) {
+        if (selected_profile_index == recompinput::profiles::get_wheel_profile_index()) {
+            return recompinput::InputDevice::Controller;
+        }
         return recompinput::players::get_player_input_device(this->selected_player);
     }
 
@@ -641,7 +659,7 @@ recompinput::InputDevice ConfigPageControls::get_player_input_device() {
 void ConfigPageControls::on_bind_click(recompinput::GameInput game_input, int input_index) {
     recompinput::InputDevice device = get_player_input_device();
 
-    recompinput::binding::start_scanning(this->selected_player, game_input, input_index, device);
+    recompinput::binding::start_scanning(this->selected_player, game_input, input_index, device, selected_profile_index);
     awaiting_binding = true;
     awaiting_binding_for_menu_action_button = get_game_input_is_menu(game_input);
 }

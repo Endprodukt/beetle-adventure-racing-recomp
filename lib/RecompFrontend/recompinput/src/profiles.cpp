@@ -34,6 +34,8 @@ static std::unordered_map<uint64_t, int> controller_hash_index_map{};
 
 static int keyboard_sp_profile_index = -1;
 static int controller_sp_profile_index = -1;
+static int wheel_profile_index = -1;
+static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
 
 static const std::string keyboard_sp_profile_key = "keyboard_sp";
 static const std::string controller_sp_profile_key = "controller_sp";
@@ -79,6 +81,10 @@ namespace recompinput {
     }
 
     void profiles::reset_input_binding(int profile_index, InputDevice device, GameInput input) {
+        if (profile_index == wheel_profile_index) {
+            profiles::clear_input_binding(profile_index, input);
+            return;
+        }
         std::vector<InputField> new_mappings = recompinput::get_default_mapping_for_input(device, input);
         for (size_t binding_index = 0; binding_index < recompinput::num_bindings_per_input; binding_index++) {
             if (binding_index >= new_mappings.size()) {
@@ -94,6 +100,12 @@ namespace recompinput {
     }
 
     void profiles::reset_profile_bindings(int profile_index, InputDevice device) {
+        if (profile_index == wheel_profile_index) {
+            for (size_t i = 0; i < recompinput::num_game_inputs; ++i) {
+                profiles::clear_input_binding(profile_index, static_cast<GameInput>(i));
+            }
+            return;
+        }
         // multiplayer keyboard profiles just get cleared completely because of overlapping key bindings.
         bool is_multiplayer_kb = false;
         if (device == InputDevice::Keyboard) {
@@ -339,6 +351,7 @@ namespace recompinput {
     void profiles::initialize_input_bindings() {
         keyboard_sp_profile_index = profiles::add_input_profile(keyboard_sp_profile_key, keyboard_sp_profile_name, recompinput::InputDevice::Keyboard, false);
         controller_sp_profile_index = profiles::add_input_profile(controller_sp_profile_key, controller_sp_profile_name, recompinput::InputDevice::Controller, false);
+        wheel_profile_index = profiles::add_input_profile("wheel", "Wheel", recompinput::InputDevice::Controller, false);
 
         // Set Player 1 to the SP profiles by default.
         profiles::set_input_profile_for_player(0, keyboard_sp_profile_index, recompinput::InputDevice::Keyboard);
@@ -347,6 +360,21 @@ namespace recompinput {
 
     int profiles::get_sp_controller_profile_index() {
         return controller_sp_profile_index;
+    }
+
+    int profiles::get_wheel_profile_index() {
+        return wheel_profile_index;
+    }
+
+    bool profiles::is_wheel_selected(int player_index) {
+        return player_index >= 0 && player_index < (int)wheel_selected.size() && wheel_selected[player_index];
+    }
+
+    void profiles::set_wheel_selected(int player_index, bool selected) {
+        if (player_index >= 0 && player_index < (int)wheel_selected.size()) {
+            wheel_selected[player_index] = selected;
+            if (selected) profiles::set_input_profile_for_player(player_index, wheel_profile_index, InputDevice::Controller);
+        }
     }
 
     int profiles::get_sp_keyboard_profile_index() {
@@ -430,6 +458,7 @@ namespace recompinput {
         config_json["version"] = profiles::controls_config_version;
         config_json["profiles"] = std::vector<json>(profile_count);
         config_json["controllers"] = std::vector<json>(controller_count);
+        config_json["wheel_players"] = wheel_selected;
 
         json &profiles = config_json["profiles"];
         for (int i = 0; i < profile_count; i++) {
@@ -473,6 +502,10 @@ namespace recompinput {
     }
 
     static void assign_all_mappings(int profile_index, InputDevice device) {
+        if (profile_index == wheel_profile_index) {
+            profiles::reset_profile_bindings(profile_index, device);
+            return;
+        }
         for (size_t i = 0; i < recompinput::num_game_inputs; i++) {
             GameInput cur_input = static_cast<GameInput>(i);
             assign_mapping_complete(profile_index, cur_input, recompinput::get_default_mapping_for_input(device, cur_input));
@@ -522,11 +555,17 @@ namespace recompinput {
         if (!recompinput::read_json_with_backups(path, config_json)) {
             assign_all_mappings(profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
             assign_all_mappings(profiles::get_sp_controller_profile_index(), InputDevice::Controller);
+            // A wheel has no universal button/axis layout. Let the user assign each input.
             return false;
         }
 
         auto version_it = config_json.find("version");
         if (version_it != config_json.end()) {
+            if (auto selected = config_json.find("wheel_players"); selected != config_json.end() && selected->is_array()) {
+                for (size_t i = 0; i < wheel_selected.size() && i < selected->size(); ++i) {
+                    if ((*selected)[i].is_boolean()) wheel_selected[i] = (*selected)[i].get<bool>();
+                }
+            }
             auto profiles = config_json.find("profiles");
             if (profiles == config_json.end() || !profiles->is_array()) {
                 return false;

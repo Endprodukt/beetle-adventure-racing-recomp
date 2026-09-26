@@ -204,6 +204,51 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
     return false;
 }
 
+static SDL_Joystick* find_wheel_device(const InputField& field) {
+    if (field.device_guid.empty()) return nullptr;
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+        if (!joystick) continue;
+        char guid[33]{};
+        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+        if (field.device_guid != guid) continue;
+        if (!field.device_serial.empty()) {
+            const char* serial = SDL_JoystickGetSerial(joystick);
+            if (!serial || field.device_serial != serial) continue;
+        } else if (!field.device_path.empty()) {
+            const char* path = SDL_JoystickPath(joystick);
+            if (!path || field.device_path != path) continue;
+        }
+        return joystick;
+    }
+    return nullptr;
+}
+
+static float wheel_input_state(const InputField& field) {
+    SDL_Joystick* joystick = find_wheel_device(field);
+    if (!joystick) return 0.0f;
+    switch (field.input_type) {
+    case InputType::JoystickButton:
+        return field.input_id >= 0 && field.input_id < SDL_JoystickNumButtons(joystick) &&
+            SDL_JoystickGetButton(joystick, field.input_id) ? 1.0f : 0.0f;
+    case InputType::JoystickHat:
+        return field.input_id >= 0 && field.input_id / 16 < SDL_JoystickNumHats(joystick) &&
+            (SDL_JoystickGetHat(joystick, field.input_id / 16) & (field.input_id % 16)) == (field.input_id % 16)
+            ? 1.0f : 0.0f;
+    case InputType::JoystickAxis: {
+        int axis = std::abs(field.input_id) - 1;
+        if (axis < 0 || axis >= SDL_JoystickNumAxes(joystick)) return 0.0f;
+        const int raw = SDL_JoystickGetAxis(joystick, axis);
+        const int range = field.input_id < 0 ? field.axis_rest + 32768 : 32767 - field.axis_rest;
+        if (range <= 0) return 0.0f;
+        const float value = (field.input_id < 0 ? field.axis_rest - raw : raw - field.axis_rest) / (float)range;
+        return std::clamp(value, 0.0f, 1.0f);
+    }
+    default:
+        return 0.0f;
+    }
+}
+
 bool recompinput::should_override_keystate(SDL_Scancode key, SDL_Keymod mod) {
     // Override Enter when Alt is held.
     if (key == SDL_Scancode::SDL_SCANCODE_RETURN) {
@@ -229,6 +274,10 @@ float recompinput::get_input_analog(int controller_num, const InputField& field)
         return controller_button_state(controller_num, field.input_id) ? 1.0f : 0.0f;
     case InputType::ControllerAnalog:
         return controller_axis_state(controller_num, field.input_id, true);
+    case InputType::JoystickButton:
+    case InputType::JoystickAxis:
+    case InputType::JoystickHat:
+        return wheel_input_state(field);
     case InputType::Mouse:
         // TODO mouse support
         return 0.0f;
@@ -260,6 +309,10 @@ bool recompinput::get_input_digital(int controller_num, const InputField& field)
     case InputType::ControllerAnalog:
         // TODO adjustable threshold
         return controller_axis_state(controller_num, field.input_id, true) >= recompinput::axis_digital_threshold;
+    case InputType::JoystickButton:
+    case InputType::JoystickAxis:
+    case InputType::JoystickHat:
+        return wheel_input_state(field) >= recompinput::axis_digital_threshold;
     case InputType::Mouse:
         // TODO mouse support
         return false;

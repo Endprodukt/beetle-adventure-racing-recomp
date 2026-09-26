@@ -58,6 +58,9 @@ namespace recompinput {
         std::string get_mp_keyboard_profile_name(int player_index);
         void initialize_input_bindings();
         int get_sp_controller_profile_index();
+        int get_wheel_profile_index();
+        bool is_wheel_selected(int player_index);
+        void set_wheel_selected(int player_index, bool selected);
         int get_sp_keyboard_profile_index();
         int get_or_create_mp_keyboard_profile_index(int player_index);
         std::string get_string_from_controller_guid(ControllerGUID guid);

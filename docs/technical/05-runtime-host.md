@@ -287,7 +287,7 @@ one returning zeros, the identify handshake (`0xFE` then `0x80`), then 70 motor-
 one. Only `mempak_p0.pak` exists afterwards. Players three and four (skip counts 2 and 3) were
 verified in a 4-player battle with all ports on the keyboard; see `docs/KNOWN_ISSUES.md`.
 
-### Player assignment, and the two local changes to RecompFrontend
+### Player assignment and wheel input in RecompFrontend
 
 RecompFrontend assigns pads to players exactly one way: the Controls tab's "Assign players" button
 opens a modal and each player presses a button on the pad they want. Until someone has been through
@@ -307,6 +307,20 @@ to choose.
 any pad's controller profile index** changes, and logs every device SDL enumerates (with
 `game_controller=0/1`) and each player's pad and profile. A pad without an SDL game-controller
 mapping never reaches the list at all; the log says so.
+
+**Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
+has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
+profiles; `wheel_players` records which of BAR's four ports selected it. Auto assignment and a
+manual assignment retain that choice. The Wheel profile starts empty because USB wheels, pedals
+and shifters have no universal axis layout. `Edit Profile` listens to SDL joystick buttons, hats
+and axes from *every open device*, including joysticks that SDL does not classify as game
+controllers. Each binding stores its SDL GUID, serial if available, otherwise its device path,
+and the raw axis resting position. At play time the profile looks up that same physical device
+and normalizes an axis from its recorded rest toward the selected direction. A missing device
+contributes zero. This allows a separate pedal set and wheel to supply the same player's inputs
+without putting both in the Assign Players modal. Identical devices without serial or path
+cannot be distinguished; moving a serial-less device to a different USB path may require
+rebinding. This path handles input only; it does not implement force feedback.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.

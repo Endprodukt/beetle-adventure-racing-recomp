@@ -251,6 +251,7 @@ static std::string controller_axis_to_string(int axis) {
 }
 
 std::string recompinput::InputField::to_string() const {
+    std::string wheel_label;
     switch (input_type) {
     case InputType::None:
         return "";
@@ -260,9 +261,16 @@ std::string recompinput::InputField::to_string() const {
         return controller_axis_to_string(input_id);
     case InputType::Keyboard:
         return keyboard_input_to_string((SDL_Scancode)input_id);
+    case InputType::JoystickButton:
+        wheel_label = "Button " + std::to_string(input_id + 1); break;
+    case InputType::JoystickAxis:
+        wheel_label = "Axis " + std::to_string(std::abs(input_id)) + (input_id > 0 ? "+" : "-"); break;
+    case InputType::JoystickHat:
+        wheel_label = "Hat " + std::to_string(input_id / 16 + 1) + " (" + std::to_string(input_id % 16) + ")"; break;
     default:
         return recompinput::unknown_device_input;
     }
+    return (device_name.empty() ? std::string("Joystick") : device_name) + ": " + wheel_label;
 }
 
 };

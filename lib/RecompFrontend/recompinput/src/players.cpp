@@ -186,6 +186,11 @@ void players::auto_assign_controllers(SDL_GameController* const* controllers, si
     // profile has none. get_n64_input reads a player's controller and keyboard
     // profiles and merges them, so player one can use either at any moment.
     profiles::set_input_profile_for_player(0, profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
+    for (int i = 0; i < (int)PlayerState.players.get_count(); ++i) {
+        if (profiles::is_wheel_selected(i)) {
+            profiles::set_input_profile_for_player(i, profiles::get_wheel_profile_index(), InputDevice::Controller);
+        }
+    }
 }
 
 void playerassignment::stop_and_close_modal() {
@@ -228,6 +233,9 @@ void playerassignment::commit_player_assignment() {
         }
         profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
         profiles::set_input_profile_for_player(i, kb_profile_index, InputDevice::Keyboard);
+        if (profiles::is_wheel_selected(i)) {
+            profiles::set_input_profile_for_player(i, profiles::get_wheel_profile_index(), InputDevice::Controller);
+        }
     }
 }
 

@@ -19,6 +19,21 @@ void queue_if_enabled(SDL_Event* event) {
 
 // Controllers plugged in while in single player mode will create profiles after switching to multiplayer.
 static std::unordered_map<uint64_t, ControllerGUID> deferred_controller_profiles;
+static std::unordered_map<SDL_JoystickID, SDL_Joystick*> open_wheel_devices;
+
+static InputField wheel_input(SDL_JoystickID id, InputType type, int input_id) {
+    InputField field{type, input_id};
+    SDL_Joystick* joystick = SDL_JoystickFromInstanceID(id);
+    if (joystick != nullptr) {
+        char guid[33]{};
+        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+        field.device_guid = guid;
+        if (const char* serial = SDL_JoystickGetSerial(joystick)) field.device_serial = serial;
+        if (const char* path = SDL_JoystickPath(joystick)) field.device_path = path;
+        if (const char* name = SDL_JoystickName(joystick)) field.device_name = name;
+    }
+    return field;
+}
 
 static int get_or_create_controller_profile_index(ControllerGUID guid) {
     std::string default_profile_key = profiles::get_string_from_controller_guid(guid);
@@ -104,6 +119,43 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         recompinput::remove_controller_state(controller_event->which);
     }
     break;
+    case SDL_EventType::SDL_JOYDEVICEADDED:
+        // SDL_GameControllerOpen opens mapped joysticks. Open the unmapped wheel/pedal/shifter
+        // devices too, so they produce JOYAXIS, JOYBUTTON and JOYHAT events.
+        if (!SDL_IsGameController(event->jdevice.which)) {
+            if (SDL_Joystick* joystick = SDL_JoystickOpen(event->jdevice.which)) {
+                open_wheel_devices[SDL_JoystickInstanceID(joystick)] = joystick;
+            }
+        }
+        break;
+    case SDL_EventType::SDL_JOYDEVICEREMOVED:
+        if (auto it = open_wheel_devices.find(event->jdevice.which); it != open_wheel_devices.end()) {
+            SDL_JoystickClose(it->second);
+            open_wheel_devices.erase(it);
+        }
+        break;
+    case SDL_EventType::SDL_JOYBUTTONDOWN:
+        if (binding::is_wheel_being_bound()) {
+            binding::set_scanned_input(wheel_input(event->jbutton.which, InputType::JoystickButton, event->jbutton.button));
+        }
+        break;
+    case SDL_EventType::SDL_JOYHATMOTION:
+        if (binding::is_wheel_being_bound() && event->jhat.value != SDL_HAT_CENTERED) {
+            binding::set_scanned_input(wheel_input(event->jhat.which, InputType::JoystickHat,
+                event->jhat.hat * 16 + event->jhat.value));
+        }
+        break;
+    case SDL_EventType::SDL_JOYAXISMOTION:
+        if (binding::is_wheel_being_bound()) {
+            const int rest = binding::wheel_axis_rest(event->jaxis.which, event->jaxis.axis);
+            const int movement = (int)event->jaxis.value - rest;
+            if (std::abs(movement) < 16384) break;
+            InputField field = wheel_input(event->jaxis.which, InputType::JoystickAxis,
+                movement > 0 ? event->jaxis.axis + 1 : -event->jaxis.axis - 1);
+            field.axis_rest = rest;
+            binding::set_scanned_input(field);
+        }
+        break;
     case SDL_EventType::SDL_QUIT: {
         if (!ultramodern::is_game_started()) {
             ultramodern::quit();

@@ -63,7 +63,10 @@ namespace recompinput {
         Keyboard,
         Mouse,
         ControllerDigital,
-        ControllerAnalog // Axis input_id values are the SDL value + 1
+        ControllerAnalog, // Axis input_id values are the SDL value + 1
+        JoystickButton,
+        JoystickAxis,    // signed (axis index + 1), matching ControllerAnalog
+        JoystickHat      // hat index * 16 + SDL_HAT_* direction
     };
 
     
@@ -72,6 +75,12 @@ namespace recompinput {
         InputType input_type;
         // Represents a single source input. e.g. A keyboard's shift key, or a controller's R trigger
         int32_t input_id;
+        // Wheel bindings identify the physical device, so pedals on another USB device work.
+        std::string device_guid;
+        std::string device_serial;
+        std::string device_path;
+        std::string device_name;
+        int axis_rest = 0; // raw SDL position when the wheel axis was assigned
         std::string to_string() const;
         auto operator<=>(const InputField& rhs) const = default;
 
@@ -94,11 +103,21 @@ namespace recompinput {
 
     inline void to_json(nlohmann::json& j, const InputField& field) {
         j = nlohmann::json{ {"input_type", field.input_type}, {"input_id", field.input_id} };
+        if (!field.device_guid.empty()) j["device_guid"] = field.device_guid;
+        if (!field.device_serial.empty()) j["device_serial"] = field.device_serial;
+        if (!field.device_path.empty()) j["device_path"] = field.device_path;
+        if (!field.device_name.empty()) j["device_name"] = field.device_name;
+        if (field.input_type == InputType::JoystickAxis) j["axis_rest"] = field.axis_rest;
     }
 
     inline void from_json(const nlohmann::json& j, InputField& field) {
         j.at("input_type").get_to(field.input_type);
         j.at("input_id").get_to(field.input_id);
+        field.device_guid = j.value("device_guid", std::string{});
+        field.device_serial = j.value("device_serial", std::string{});
+        field.device_path = j.value("device_path", std::string{});
+        field.device_name = j.value("device_name", std::string{});
+        field.axis_rest = j.value("axis_rest", 0);
     }
 
     // Represents the types of mapping/profiles that can be done.
