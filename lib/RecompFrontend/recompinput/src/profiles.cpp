@@ -452,19 +452,6 @@ namespace recompinput {
             const bool wheel_menu_back = profile_index_cont == wheel_profile_index &&
                 recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::GAME_MENU_BACK]);
             const bool wheel_driving = wheel_driving_state.load(std::memory_order_relaxed);
-            if (profile_index_cont == wheel_profile_index && wheel_driving) {
-                // BAR's Wheel control scheme uses Z for the hand brake and B for Abort.
-                // The editor's action rows have historically stored Hand Brake under B and
-                // Abort under Z. Exchange only the Wheel profile's bits here so existing
-                // controls.json bindings keep their meaning; the keyboard profile is merged
-                // below and ordinary controller profiles keep their native N64 layout.
-                constexpr uint16_t kB = 0x4000, kZ = 0x2000;
-                const bool hand_brake = (cur_buttons & kB) != 0;
-                const bool abort = (cur_buttons & kZ) != 0;
-                cur_buttons &= ~(kB | kZ);
-                if (hand_brake) cur_buttons |= kZ;
-                if (abort) cur_buttons |= kB;
-            }
             if (profile_index_cont == wheel_profile_index && !wheel_driving) {
                 const input_mapping_array &mappings = input_profiles[wheel_profile_index].mappings;
                 auto game_menu_button = [&](GameInput virtual_input, uint16_t n64_bit) {
@@ -482,7 +469,7 @@ namespace recompinput {
             if (profile_index_cont == wheel_profile_index && player_index == 0) {
                 // One line per press/release, without requiring a launch environment variable.
                 // Track the physical binding, race/menu classification and the final
-                // Wheel-scheme hand-brake bit (Z). Outside a race, Menu Back uses B.
+                // Wheel hand-brake bit (B). Outside a race, Menu Back also uses B.
                 static bool last_brake = false, last_back = false;
                 if (wheel_brake != last_brake || wheel_menu_back != last_back) {
                     wheel_debug_log("[wheel-brake] binding=" + std::to_string(wheel_brake) +
