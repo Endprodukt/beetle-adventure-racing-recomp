@@ -419,6 +419,11 @@ binding transition identifies an unmatched
 device or button; `binding=1` with `Z_out=0` in a race identifies the race/menu classification;
 `Z_out=1` confirms that the Wheel scheme's hand-brake bit leaves the Wheel profile. `B_out`
 continues to show the game's Back button outside a race.
+`[wheel-button]` now prints the one-based button number shown in the editor and the zero-based
+SDL ID in parentheses. `[wheel-key]` records SDL key-down scancodes, while `[wheel-output]`
+records the Wheel-profile and keyboard-profile N64 masks separately on each transition.
+These distinguish a second bound action, a keyboard event synthesized by wheel software,
+and a mismatch between the emitted N64 buttons and the active in-game control scheme.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
