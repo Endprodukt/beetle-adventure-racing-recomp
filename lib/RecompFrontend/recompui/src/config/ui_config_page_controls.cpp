@@ -649,9 +649,15 @@ void ConfigPageControls::render_control_mappings() {
 
 void ConfigPageControls::set_current_profile_index() {
     if (!multiplayer_enabled) {
-        selected_profile_index = single_player_show_keyboard_mappings
-            ? recompinput::profiles::get_sp_keyboard_profile_index()
-            : recompinput::profiles::get_sp_controller_profile_index();
+        // Keep the Wheel profile visible in single-player mode when it is
+        // selected for player 1; otherwise use the normal SP profile.
+        if (recompinput::profiles::is_wheel_selected(0)) {
+            selected_profile_index = recompinput::profiles::get_wheel_profile_index();
+        } else {
+            selected_profile_index = single_player_show_keyboard_mappings
+                ? recompinput::profiles::get_sp_keyboard_profile_index()
+                : recompinput::profiles::get_sp_controller_profile_index();
+        }
     }
 }
 
