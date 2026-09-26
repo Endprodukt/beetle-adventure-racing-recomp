@@ -309,7 +309,12 @@ any pad's controller profile index** changes, and logs every device SDL enumerat
 mapping never reaches the list at all; the log says so.
 If SDL has enumerated a game controller before its per-device profile exists, auto assignment
 temporarily uses the initialized `Controller (SP)` profile. A later `refresh_players` pass replaces
-that fallback when the device-specific profile appears. Manual assignment uses the same fallback.
+that fallback when the device-specific profile appears. `refresh_players` now creates any missing
+device-specific profile from the enumerated SDL controller, too: the initial
+`CONTROLLERDEVICEADDED` event can have been consumed before the input pump starts. The resulting
+`Controller` entry uses the standard gamepad defaults and is assigned automatically. `Controller
+(SP)` is the shared single-player fallback, not a separate device or a required user choice.
+Manual assignment uses the same fallback if creation still fails.
 
 The RecompFrontend menu's controller-button handler must tolerate a profile index of `-1`:
 events can arrive before the first assignment or from a controller without a profile.
@@ -322,6 +327,15 @@ The same sentinel can reach `Modal::render_menu_actions`: a 2026-09-26 hang repo
 bindings until the controller profile is ready, and skip drawing if neither profile is valid.
 The subsequent SDL-pump hang report was caused by the blocking assertion dialog on the present
 thread; it was not a second input fault.
+Raw wheel devices bypass the SDL GameController button menu handler. The event pump queues their
+button, hat and axis events when it is not recording a binding; the UI resolves each event against
+player one's selected Wheel profile using the sampled device instance ID, GUID and serial/path.
+Each menu input generates the corresponding Rml key once per press, with an axis rearmed below
+15% travel and actuated at 50%. Key bindings stored in the Wheel profile follow the same menu
+action mapping. Toggle Menu can therefore open the settings from a raw wheel button, and the
+other menu actions work while the settings are open.
+The menu's action hints choose the Wheel profile when player one selected it, even if the
+assigned player card represents the keyboard because no SDL game controller is attached.
 
 **Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
 has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
