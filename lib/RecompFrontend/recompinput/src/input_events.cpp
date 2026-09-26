@@ -21,6 +21,132 @@ void queue_if_enabled(SDL_Event* event) {
 static std::unordered_map<uint64_t, ControllerGUID> deferred_controller_profiles;
 static std::unordered_map<SDL_JoystickID, SDL_Joystick*> open_wheel_devices;
 
+// All SDL haptic handles live on the same thread as the joystick event pump.
+static struct {
+    SDL_JoystickID id = -1;
+    SDL_Haptic* handle = nullptr;
+    int spring_effect = -1;
+    int spring_strength = -1;
+    bool autocenter = false;
+    bool rumble = false;
+    bool open_failed = false;
+} wheel_ffb;
+
+static void close_wheel_ffb() {
+    if (wheel_ffb.handle) {
+        if (wheel_ffb.rumble) SDL_HapticRumbleStop(wheel_ffb.handle);
+        if (wheel_ffb.autocenter) SDL_HapticSetAutocenter(wheel_ffb.handle, 0);
+        if (wheel_ffb.spring_effect >= 0) SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+        SDL_HapticClose(wheel_ffb.handle);
+    }
+    wheel_ffb = {};
+    wheel_ffb.id = -1;
+    wheel_ffb.spring_effect = -1;
+    wheel_ffb.spring_strength = -1;
+}
+
+static bool matches_wheel_binding(SDL_Joystick* joystick, const InputField& field) {
+    if (!joystick || field.input_type != InputType::JoystickAxis || field.device_guid.empty()) return false;
+    char guid[33]{};
+    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+    if (field.device_guid != guid) return false;
+    if (!field.device_serial.empty()) {
+        const char* serial = SDL_JoystickGetSerial(joystick);
+        return serial && field.device_serial == serial;
+    }
+    if (!field.device_path.empty()) {
+        const char* path = SDL_JoystickPath(joystick);
+        return path && field.device_path == path;
+    }
+    return true;
+}
+
+static SDL_Joystick* steering_joystick() {
+    const int profile = profiles::get_wheel_profile_index();
+    if (profile < 0 || !profiles::is_wheel_selected(0)) return nullptr;
+    for (GameInput direction : {GameInput::X_AXIS_NEG, GameInput::X_AXIS_POS}) {
+        for (size_t slot = 0; slot < num_bindings_per_input; ++slot) {
+            const InputField& field = profiles::get_input_binding(profile, direction, slot);
+            for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+                SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+                if (matches_wheel_binding(joystick, field)) return joystick;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void update_wheel_force_feedback(uint16_t game_rumble, bool rumble_changed) {
+    SDL_Joystick* joystick = steering_joystick();
+    const SDL_JoystickID id = joystick ? SDL_JoystickInstanceID(joystick) : -1;
+    if (wheel_ffb.id != id) close_wheel_ffb();
+    if (id < 0) return;
+    if (wheel_ffb.open_failed) return;
+
+    if (!wheel_ffb.handle) {
+        static bool haptics_unavailable = false;
+        if (haptics_unavailable) return;
+        if (SDL_WasInit(SDL_INIT_HAPTIC) == 0 && SDL_InitSubSystem(SDL_INIT_HAPTIC) != 0) {
+            std::fprintf(stderr, "[wheel-ffb] SDL haptics unavailable: %s\n", SDL_GetError());
+            haptics_unavailable = true;
+            return;
+        }
+        wheel_ffb.id = id;
+        if (!SDL_JoystickIsHaptic(joystick)) {
+            std::fprintf(stderr, "[wheel-ffb] %s: no haptic support\n", SDL_JoystickName(joystick));
+            wheel_ffb.open_failed = true;
+            return;
+        }
+        wheel_ffb.handle = SDL_HapticOpenFromJoystick(joystick);
+        if (!wheel_ffb.handle) {
+            std::fprintf(stderr, "[wheel-ffb] cannot open %s: %s\n", SDL_JoystickName(joystick), SDL_GetError());
+            wheel_ffb.open_failed = true;
+            return;
+        }
+        const unsigned int features = SDL_HapticQuery(wheel_ffb.handle);
+        wheel_ffb.rumble = SDL_HapticRumbleSupported(wheel_ffb.handle) > 0 &&
+                           SDL_HapticRumbleInit(wheel_ffb.handle) == 0;
+        wheel_ffb.autocenter = (features & SDL_HAPTIC_AUTOCENTER) != 0;
+        if (!wheel_ffb.autocenter && (features & SDL_HAPTIC_SPRING)) {
+            SDL_HapticEffect effect{};
+            effect.type = SDL_HAPTIC_SPRING;
+            effect.condition.length = SDL_HAPTIC_INFINITY;
+            effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
+            effect.condition.right_coeff[0] = effect.condition.left_coeff[0] = 0x7FFF;
+            wheel_ffb.spring_effect = SDL_HapticNewEffect(wheel_ffb.handle, &effect);
+        }
+        std::fprintf(stderr, "[wheel-ffb] %s: spring=%s, rumble=%s\n", SDL_JoystickName(joystick),
+                     wheel_ffb.autocenter ? "autocenter" : wheel_ffb.spring_effect >= 0 ? "condition" : "unsupported",
+                     wheel_ffb.rumble ? "available" : "unsupported");
+    }
+
+    const int center = profiles::get_wheel_center_strength();
+    if (center != wheel_ffb.spring_strength) {
+        wheel_ffb.spring_strength = center;
+        if (wheel_ffb.autocenter) {
+            SDL_HapticSetAutocenter(wheel_ffb.handle, center);
+        } else if (wheel_ffb.spring_effect >= 0) {
+            if (center == 0) {
+                SDL_HapticStopEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+            } else {
+                SDL_HapticEffect effect{};
+                effect.type = SDL_HAPTIC_SPRING;
+                effect.condition.length = SDL_HAPTIC_INFINITY;
+                effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
+                effect.condition.right_coeff[0] = effect.condition.left_coeff[0] =
+                    static_cast<Sint16>(0x7FFF * center / 100);
+                if (SDL_HapticUpdateEffect(wheel_ffb.handle, wheel_ffb.spring_effect, &effect) == 0)
+                    SDL_HapticRunEffect(wheel_ffb.handle, wheel_ffb.spring_effect, 1);
+            }
+        }
+    }
+    if (rumble_changed && wheel_ffb.rumble) {
+        const float strength = (game_rumble / 65535.0f) * (profiles::get_wheel_rumble_strength() / 100.0f);
+        if (strength > 0.0f) SDL_HapticRumblePlay(wheel_ffb.handle, strength, 250);
+        else SDL_HapticRumbleStop(wheel_ffb.handle);
+    }
+}
+
 static void open_unmapped_joysticks() {
     // The initial JOYDEVICEADDED events can be consumed during early SDL/renderer setup.
     // Enumeration remains available, so open every currently connected raw device here too.
@@ -38,6 +164,7 @@ static void open_unmapped_joysticks() {
         if (SDL_JoystickGetAttached(it->second)) {
             ++it;
         } else {
+            if (wheel_ffb.id == it->first) close_wheel_ffb();
             SDL_JoystickClose(it->second);
             it = open_wheel_devices.erase(it);
         }
@@ -160,6 +287,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         break;
     case SDL_EventType::SDL_JOYDEVICEREMOVED:
         if (auto it = open_wheel_devices.find(event->jdevice.which); it != open_wheel_devices.end()) {
+            if (wheel_ffb.id == it->first) close_wheel_ffb();
             SDL_JoystickClose(it->second);
             open_wheel_devices.erase(it);
         }
