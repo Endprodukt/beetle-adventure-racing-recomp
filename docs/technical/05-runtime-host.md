@@ -336,6 +336,10 @@ action mapping. Toggle Menu can therefore open the settings from a raw wheel but
 other menu actions work while the settings are open.
 The menu's action hints choose the Wheel profile when player one selected it, even if the
 assigned player card represents the keyboard because no SDL game controller is attached.
+With the Wheel profile selected, an unmapped hat on a raw joystick navigates the Recomp menu
+as a D-pad (up/down/left/right), including hold-to-repeat. Hats on SDL GameController devices
+keep their existing D-pad path. A hat direction explicitly bound to a Wheel menu action takes
+precedence over the default navigation.
 
 **Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
 has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
