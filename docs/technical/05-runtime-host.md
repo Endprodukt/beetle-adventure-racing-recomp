@@ -344,7 +344,10 @@ precedence over the default navigation.
 **Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
 has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
 profiles; `wheel_players` records which of BAR's four ports selected it. Auto assignment and a
-manual assignment retain that choice. The Wheel profile starts empty because USB wheels, pedals
+manual assignment retain that choice. Selecting a profile saves that choice immediately. At
+startup `config::finalize()` loads the controls once; the input poll treats `wheel_players` as
+authoritative even if a pad assignment has temporarily reset the active controller profile.
+The Wheel profile starts empty because USB wheels, pedals
 and shifters have no universal axis layout. `Edit Profile` listens to SDL joystick buttons, hats
 and axes from *every open device*, including joysticks that SDL does not classify as game
 controllers. Each binding stores its SDL GUID, serial if available, otherwise its device path,
