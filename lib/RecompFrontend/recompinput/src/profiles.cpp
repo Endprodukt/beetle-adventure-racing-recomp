@@ -434,7 +434,11 @@ namespace recompinput {
                 cur_y += recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_POS]) - recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::Y_AXIS_NEG]);
             };
             
-            int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
+            // wheel_players is the persisted choice. The active controller profile can
+            // temporarily be reset while loading or reassigning pads; it must not make
+            // the game read Controller (SP) while the UI still shows Wheel.
+            int profile_index_cont = profiles::is_wheel_selected(player_index) ? wheel_profile_index
+                : (players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first);
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
             // The Wheel profile accepts keyboard keys in its own binding slots. Merging
             // the ordinary keyboard profile as well makes a key perform two actions:
@@ -595,6 +599,11 @@ namespace recompinput {
             if (auto selected = config_json.find("wheel_players"); selected != config_json.end() && selected->is_array()) {
                 for (size_t i = 0; i < wheel_selected.size() && i < selected->size(); ++i) {
                     if ((*selected)[i].is_boolean()) wheel_selected[i] = (*selected)[i].get<bool>();
+                }
+            }
+            for (size_t i = 0; i < wheel_selected.size(); ++i) {
+                if (wheel_selected[i]) {
+                    profiles::set_input_profile_for_player(static_cast<int>(i), wheel_profile_index, InputDevice::Controller);
                 }
             }
             auto profiles = config_json.find("profiles");
