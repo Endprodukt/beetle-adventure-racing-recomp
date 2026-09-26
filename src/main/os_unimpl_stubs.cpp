@@ -26,7 +26,6 @@
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "frontend/bar_frontend.h"
-#include "recompinput/input_events.h"
 #endif
 
 // Per-port input resolution lives in main.cpp / bar_input (they own the Win32 window / focus + SDL).
@@ -425,25 +424,6 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
         }
         if ((st == 5) && sawSetup && (phase == 0) && humanRacing) sawHumanRacing = true;
         bar_rt64_set_hud_anchor(((st == 5) && sawSetup && ((phase == 0) || (phase == 3)) && (replay == 0) && humanRacing) ? 1 : 0);
-#ifdef BEETLE_ENABLE_FRONTEND
-        // The HUD rule above deliberately uses history and inferred car bytes for results
-        // positioning. Those are unsuitable for input: a transient state change can erase
-        // sawSetup and a car byte can clear while the player is still driving, leaving the
-        // Wheel profile stuck in its menu bindings. Use only the current game fields here.
-        const bool wheelDriving = st == 5 && (phase == 0 || phase == 3) && replay == 0 && paused == 0;
-        bar::frontend::set_wheel_driving_state(wheelDriving);
-        // Record changes with their source fields so a wrong classification in a future
-        // race can be diagnosed from wheel-input.log without guessing which gate flipped.
-        static bool lastWheelDriving = false;
-        if (wheelDriving != lastWheelDriving) {
-            recompinput::wheel_debug_log("[wheel-state] driving=" + std::to_string(wheelDriving) +
-                                         " state=" + std::to_string(st) +
-                                         " phase=" + std::to_string(phase) +
-                                         " replay=" + std::to_string(replay) +
-                                         " paused=" + std::to_string(paused));
-            lastWheelDriving = wheelDriving;
-        }
-#endif
         bar_rt64_set_game_state((unsigned int)st);
         bar_rt64_set_hud_paused((paused != 0) ? 1 : 0);
 
