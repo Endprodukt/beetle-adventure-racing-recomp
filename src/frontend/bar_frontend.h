@@ -54,6 +54,10 @@ bool port_assigned(int port);
 // and a centred stick for an unassigned port. Applies the player's own bindings.
 uint16_t poll_port(int port, int8_t* stick_x, int8_t* stick_y);
 
+// The SI hook publishes whether BAR currently has an active, unpaused race.
+// Wheel profiles use this to select driving or in-game-menu bindings.
+void set_wheel_driving_state(bool driving);
+
 // Ask recompinput to rumble this port's pad, or stop. Used only with BAR_RUMBLE_RAW=1: normally
 // pump_events() drives the pads from the motor model in src/main/bar_rumble.cpp.
 void set_port_rumble(int port, bool on);
