@@ -312,6 +312,13 @@ The RecompFrontend menu's controller-button handler must tolerate a profile inde
 events can arrive before the first assignment or from a controller without a profile.
 `check_menu_button_pressed` ignores that sentinel and compares only controller-button mappings;
 otherwise the first button event can index outside `input_profiles` and crash the host.
+The same sentinel can reach `Modal::render_menu_actions`: a 2026-09-26 hang report showed
+`player 1: Xbox One Controller (controller profile -1)` immediately before a Debug CRT
+`vector subscript out of range` in `profiles::get_input_binding`, called from
+`ui_modal.cpp:269` on the RT64 Present thread. The action hints now show player one's keyboard
+bindings until the controller profile is ready, and skip drawing if neither profile is valid.
+The subsequent SDL-pump hang report was caused by the blocking assertion dialog on the present
+thread; it was not a second input fault.
 
 **Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
 has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
