@@ -222,6 +222,9 @@ void ConfigPageControls::create_game_input_contexts() {
             { recompinput::GameInput::DPAD_DOWN, "Game Menu Down" },
             { recompinput::GameInput::DPAD_LEFT, "Game Menu Left" },
             { recompinput::GameInput::DPAD_RIGHT, "Game Menu Right" },
+            { recompinput::GameInput::GAME_MENU_CONFIRM, "Game Menu Confirm (A)" },
+            { recompinput::GameInput::GAME_MENU_BACK, "Game Menu Back (B)" },
+            { recompinput::GameInput::GAME_MENU_START, "Game Menu Start" },
         };
         for (const auto &action : actions) {
             if (!recompinput::get_game_input_disabled(action.input)) {
@@ -235,6 +238,11 @@ void ConfigPageControls::create_game_input_contexts() {
 
     for (int i = 0; i < static_cast<int>(recompinput::GameInput::COUNT); i++) {
         recompinput::GameInput input = static_cast<recompinput::GameInput>(i);
+        if (input == recompinput::GameInput::GAME_MENU_CONFIRM ||
+            input == recompinput::GameInput::GAME_MENU_BACK ||
+            input == recompinput::GameInput::GAME_MENU_START) {
+            continue; // shown only in the Wheel-specific game action list above
+        }
         if (recompinput::get_game_input_disabled(input)) {
             continue;
         }
