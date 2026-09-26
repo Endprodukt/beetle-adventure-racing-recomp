@@ -377,8 +377,7 @@ hardware force feedback behavior still requires measurement on an actual wheel.
 The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
 are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
 Hand Brake, Z is Abort, and Start is Pause / Start. Other N64 inputs are omitted from this
-editor except the four N64 D-pad directions, shown as Game Menu Up/Down/Left/Right so a raw
-hat can also navigate BAR's own in-game menus. Recomp menu inputs remain visible separately.
+editor. Recomp menu inputs remain visible separately.
 Stored input IDs and the controller editor do not change.
 Raw joystick binding slots use a smaller text font and a shortened device name to fit two
 bindings in each row; the full device name remains in the binding data and the slot title.
@@ -386,54 +385,20 @@ Wheel scanning also accepts SDL keydown events into the same profile as raw whee
 Escape cancels the scan. The runtime's input readers already evaluate keyboard fields in
 controller profiles, so a wheel action can be bound to a key in either slot.
 
-BAR receives only the N64 button mask; A, B and Start double as driving and in-game-menu
-commands. The Wheel profile therefore adds three *virtual* inputs: Game Menu Confirm (A),
-Game Menu Back (B) and Game Menu Start. They are persisted in `controls.json` with the other
-bindings but are not direct N64 buttons. At the SI hook, `gGameSettings` supplies the same
-`currentGameState`/`raceState`/`introReplayState` fields used by HUD anchoring,
-plus `pauseFlag` at +0x86. State 5, phase 0 or 3, replay 0 and pause flag clear
-counts as driving. Unlike HUD anchoring, input classification does not depend on
-whether a setup phase was observed or on the inferred per-car-racing bytes: both could
-change or reset during a race and intermittently select menu bindings. This direct rule
-may temporarily classify the first loading frame or the result transition as driving;
-the game state fields do not yet identify those frames separately. The hook publishes
-the decision before serving
-the button poll. In `profiles::get_n64_input`, a selected Wheel profile replaces its own A/B/Start
-bits with the new virtual bindings outside driving, provided the respective new input has at
-least one assignment. Unassigned new inputs retain the old A/B/Start behavior for existing
-profiles. The ordinary keyboard profile is still merged for standard gamepad profiles,
-but not for Wheel: keys are assignable directly in Wheel, and merging Keyboard (SP)
-also made A (Wheel Horn) steer left through its default keyboard mapping. `[wheel-state]`
-records each driving/menu transition and the four
-source fields in `wheel-input.log` for a live check of those transition frames.
-Hand Brake remains N64 B and Abort remains N64 Z, as labeled in the Wheel editor and
-shown on BAR's Wheel control screen. A previous B/Z swap was introduced before the
-race/menu classifier was corrected; that test could not distinguish a game mapping
-problem from the old classifier replacing B in a race. The swap made Abort emit B
-and did not fix it, so it has been removed. Outside driving, the separate Game Menu
-Back binding supplies B. The in-game behavior of both actions still needs a fresh
-live check with the corrected classifier and current Wheel control scheme.
-Until the Hand Brake path is confirmed on hardware, `[wheel-button]` logs raw button-down events
-(up to 100 per launch) and `[wheel-brake]` logs binding/menu-back transitions, the driving flag
-and the outgoing B bit. Release builds use the Windows subsystem and have no stderr console;
-both line types are also saved to `<app config>/wheel-input.log` (the same directory as
-`controls.json`), truncated at the first diagnostic line on each run. A button-down without a
-binding transition identifies an unmatched
-device or button; `binding=1` with `B_out=0` in a race identifies a routing problem;
-`B_out=1` confirms that N64 B leaves the Wheel profile. `Z_out` traces Abort's N64 Z bit.
-The 2026-09-26 Wheel trace showed a separate binding overlap: Button 8 emitted `8004`
-(A + C-Down), and Button 12 emitted `0003` (C-Left + C-Right), even though the editor
-shows only Mirror and Horn for those inputs. Older Wheel configs can retain C-Down and
-C-Left assignments after those actions were hidden from its editor. The Wheel-only N64
-button reader now ignores these two invisible action mappings, leaving visible Wheel
-actions, keyboard bindings, and ordinary controller profiles intact. The same trace showed
-Button 10 (the visible Abort binding) emitting B after the mistaken B/Z swap, with no
-reported Abort effect; after removal it emits Z again.
-`[wheel-button]` now prints the one-based button number shown in the editor and the zero-based
-SDL ID in parentheses. `[wheel-key]` records SDL key-down scancodes, while `[wheel-output]`
-records the Wheel-profile and keyboard-profile N64 masks separately on each transition.
-These distinguish a second bound action, a keyboard event synthesized by wheel software,
-and a mismatch between the emitted N64 buttons and the active in-game control scheme.
+The Wheel profile now sends only its directly bound N64 buttons and analog stick. There is
+no driving/menu classification and no separate Game Menu Confirm/Back/Start or Wheel D-pad
+rows. A/B/Start therefore keep the same N64 bits in both contexts; this also means those
+driving actions and their in-game menu functions cannot have separate physical bindings.
+Older `controls.json` entries for the removed virtual menu actions are ignored on load and
+omitted on save. Old Wheel C-Left/C-Down and D-pad entries, hidden from its editor, are
+ignored at runtime so they cannot silently generate extra N64 actions. The Recomp menu's
+own input settings are independent and remain available.
+The ordinary keyboard profile is still merged for standard gamepad profiles, but not for
+Wheel: keys can be bound directly in Wheel, and merging Keyboard (SP) made a key such as
+A trigger both Wheel Horn and the default steering-left action. The renderer's existing
+HUD game-state logic remains separate from this input path. `[wheel-button]` logs raw
+button-down events with the one-based editor button number and the zero-based SDL ID,
+and `[wheel-key]` logs keydown scancodes to `<app config>/wheel-input.log`.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
