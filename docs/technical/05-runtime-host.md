@@ -320,7 +320,10 @@ and normalizes an axis from its recorded rest toward the selected direction. A m
 contributes zero. This allows a separate pedal set and wheel to supply the same player's inputs
 without putting both in the Assign Players modal. Identical devices without serial or path
 cannot be distinguished; moving a serial-less device to a different USB path may require
-rebinding. This path handles input only; it does not implement force feedback.
+rebinding. The window thread samples all open joystick buttons, hats and axes once per input
+poll and publishes an immutable snapshot. The game's SI thread reads that snapshot while polling
+the profile, so it never holds an SDL joystick pointer that the event thread could close on
+disconnect. This path handles input only; it does not implement force feedback.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
