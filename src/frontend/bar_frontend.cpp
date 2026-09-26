@@ -466,10 +466,13 @@ void bar::frontend::pump_events() {
     // own strength over this one. BAR_RUMBLE_RAW=1 goes back to it (A/B).
     if (bar::rumble::raw_mode()) {
         recompinput::update_rumble();
+        recompinput::update_wheel_force_feedback(0, false);
     } else {
         uint16_t strength[bar::rumble::kPorts];
         bool send[bar::rumble::kPorts];
         bar::rumble::step(recompui::config::general::get_rumble_strength(), bar_output_silenced(), strength, send);
+        // The Wheel profile selects its own haptic device from the bound steering axis.
+        recompinput::update_wheel_force_feedback(strength[0], send[0]);
         for (int port = 0; port < bar::rumble::kPorts && port < kMaxPlayers; port++) {
             if (!send[port] || !recompinput::players::get_player_is_assigned(port)) continue;
             SDL_GameController* pad = recompinput::players::get_player(port).controller;
