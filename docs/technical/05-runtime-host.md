@@ -409,7 +409,9 @@ The game's own Options → Controller layout is separate from this host-side Whe
 For the report that a saved in-game Wheel layout works only after cycling the in-game option,
 `BAR_DBG_LAYOUT=1` logs changes to four bytes at the decomp symbol
 `gOptionsControllerLayoutMenu` (`0x8002CD40`) and sixteen bytes at `gControllerLayout`
-(`0x8002D064`), along with `currentGameState`, to `<app config>/layout-trace.log` and stderr.
+(`0x8002D064`), the 72 bytes between `gCustomButtonMap` (`0x8002D01C`) and the
+layout global, plus changed N64 button outputs and `currentGameState`, to
+`<app config>/layout-trace.log`. The global snapshots also go to stderr.
 The file is created as soon as the host starts with `BAR_DBG_LAYOUT=1`.
 These are observation ranges, not confirmed
 field sizes. Compare the trace after loading the save and after switching away and back;
