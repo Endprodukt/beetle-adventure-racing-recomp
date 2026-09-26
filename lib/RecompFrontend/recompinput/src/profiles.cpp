@@ -1,12 +1,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <atomic>
-#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <string>
 #include "recompinput/profiles.h"
-#include "recompinput/input_events.h"
 #include "./json.h"
 #include "xxHash/xxh3.h"
 
@@ -40,7 +38,6 @@ static int keyboard_sp_profile_index = -1;
 static int controller_sp_profile_index = -1;
 static int wheel_profile_index = -1;
 static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
-static std::atomic_bool wheel_driving_state{false};
 static std::atomic_int wheel_center_strength{20};
 static std::atomic_int wheel_rumble_strength{50};
 
@@ -419,12 +416,12 @@ namespace recompinput {
                 const input_mapping_array &mappings = input_profiles[profile_index].mappings;
                 for (size_t i = 0; i < n64_button_values.size(); i++) {
                     const GameInput action = static_cast<GameInput>((size_t)GameInput::N64_BUTTON_START + i);
-                    // Old Wheel configs may contain C-Left/C-Down bindings from before
-                    // the action-only editor hid those rows. Their N64 bits still fired:
-                    // Mirror also emitted C-Down (hand brake), and Horn also emitted
-                    // C-Left (mirror). Ignore only these invisible Wheel mappings.
+                    // Ignore old Wheel mappings for actions removed from the Wheel
+                    // editor. Existing controls.json files can still contain them.
                     if (profile_index == wheel_profile_index &&
-                        (action == GameInput::C_LEFT || action == GameInput::C_DOWN)) continue;
+                        (action == GameInput::C_LEFT || action == GameInput::C_DOWN ||
+                         action == GameInput::DPAD_UP || action == GameInput::DPAD_DOWN ||
+                         action == GameInput::DPAD_LEFT || action == GameInput::DPAD_RIGHT)) continue;
                     cur_buttons |= recompinput::get_input_digital(player_index, mappings[(size_t)action]) ? n64_button_values[i] : 0;
                 }
             };
@@ -447,62 +444,7 @@ namespace recompinput {
             // For a Wheel player, use only the keys explicitly bound in Wheel.
             if (profile_index_cont == wheel_profile_index) profile_index_kb = -1;
             check_buttons(profile_index_cont);
-            const bool wheel_brake = profile_index_cont == wheel_profile_index &&
-                recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::B]);
-            const bool wheel_menu_back = profile_index_cont == wheel_profile_index &&
-                recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::GAME_MENU_BACK]);
-            const bool wheel_driving = wheel_driving_state.load(std::memory_order_relaxed);
-            if (profile_index_cont == wheel_profile_index && !wheel_driving) {
-                const input_mapping_array &mappings = input_profiles[wheel_profile_index].mappings;
-                auto game_menu_button = [&](GameInput virtual_input, uint16_t n64_bit) {
-                    const auto &fields = mappings[static_cast<size_t>(virtual_input)];
-                    // Existing Wheel configs still work until the new menu row is assigned.
-                    if (std::any_of(fields.begin(), fields.end(), [](const InputField &field) { return !field.is_empty(); })) {
-                        cur_buttons &= ~n64_bit;
-                        if (recompinput::get_input_digital(player_index, fields)) cur_buttons |= n64_bit;
-                    }
-                };
-                game_menu_button(GameInput::GAME_MENU_CONFIRM, 0x8000); // N64 A
-                game_menu_button(GameInput::GAME_MENU_BACK, 0x4000);    // N64 B
-                game_menu_button(GameInput::GAME_MENU_START, 0x1000);   // N64 Start
-            }
-            if (profile_index_cont == wheel_profile_index && player_index == 0) {
-                // One line per press/release, without requiring a launch environment variable.
-                // Track the physical binding, race/menu classification and the final
-                // Wheel hand-brake bit (B). Outside a race, Menu Back also uses B.
-                static bool last_brake = false, last_back = false;
-                if (wheel_brake != last_brake || wheel_menu_back != last_back) {
-                    wheel_debug_log("[wheel-brake] binding=" + std::to_string(wheel_brake) +
-                                    " menu_back=" + std::to_string(wheel_menu_back) +
-                                    " driving=" + std::to_string(wheel_driving) +
-                                    " B_out=" + std::to_string((cur_buttons & 0x4000) != 0) +
-                                    " Z_out=" + std::to_string((cur_buttons & 0x2000) != 0));
-                    last_brake = wheel_brake;
-                    last_back = wheel_menu_back;
-                }
-            }
-            // Keep the two sources separate for diagnostics. A wheel button can also
-            // generate keyboard input through a driver or a shifter utility; OR-ing
-            // before logging hid that second action completely.
-            const uint16_t wheel_buttons = cur_buttons;
-            cur_buttons = 0;
             check_buttons(profile_index_kb);
-            const uint16_t keyboard_buttons = cur_buttons;
-            cur_buttons |= wheel_buttons;
-            if (profile_index_cont == wheel_profile_index && player_index == 0) {
-                static uint16_t last_wheel = 0, last_keyboard = 0;
-                static int input_transitions = 0;
-                if ((wheel_buttons != last_wheel || keyboard_buttons != last_keyboard) && input_transitions++ < 300) {
-                    char line[128];
-                    std::snprintf(line, sizeof(line),
-                                  "[wheel-output] driving=%d wheel=%04X keyboard=%04X combined=%04X",
-                                  (int)wheel_driving, (unsigned)wheel_buttons,
-                                  (unsigned)keyboard_buttons, (unsigned)cur_buttons);
-                    wheel_debug_log(line);
-                }
-                last_wheel = wheel_buttons;
-                last_keyboard = keyboard_buttons;
-            }
 
             check_joystick(profile_index_cont);
             recompinput::apply_joystick_deadzone(cur_x, cur_y, &cur_x, &cur_y);
@@ -514,10 +456,6 @@ namespace recompinput {
         *y_out = std::clamp(cur_y, -1.0f, 1.0f);
 
         return true;
-    }
-
-    void profiles::set_wheel_driving_state(bool driving) {
-        wheel_driving_state.store(driving, std::memory_order_relaxed);
     }
 
     int profiles::get_wheel_center_strength() { return wheel_center_strength.load(std::memory_order_relaxed); }
