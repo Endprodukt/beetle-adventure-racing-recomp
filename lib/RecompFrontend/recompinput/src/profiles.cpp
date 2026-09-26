@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <string>
 #include "recompinput/profiles.h"
+#include "recompinput/input_events.h"
 #include "./json.h"
 #include "xxHash/xxh3.h"
 
@@ -457,9 +458,10 @@ namespace recompinput {
                 // classification, or the final B bit sent to the game.
                 static bool last_brake = false, last_back = false;
                 if (wheel_brake != last_brake || wheel_menu_back != last_back) {
-                    std::fprintf(stderr, "[wheel-brake] binding=%d menu_back=%d driving=%d B_out=%d\n",
-                                 wheel_brake, wheel_menu_back,
-                                 wheel_driving_state.load(std::memory_order_relaxed), (cur_buttons & 0x4000) != 0);
+                    wheel_debug_log("[wheel-brake] binding=" + std::to_string(wheel_brake) +
+                                    " menu_back=" + std::to_string(wheel_menu_back) +
+                                    " driving=" + std::to_string(wheel_driving_state.load(std::memory_order_relaxed)) +
+                                    " B_out=" + std::to_string((cur_buttons & 0x4000) != 0));
                     last_brake = wheel_brake;
                     last_back = wheel_menu_back;
                 }
