@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <atomic>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <string>
@@ -433,6 +434,20 @@ namespace recompinput {
             int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
             check_buttons(profile_index_cont);
+            if (profile_index_cont == wheel_profile_index) {
+                static const bool trace = std::getenv("BAR_WHEEL_INPUT_TRACE") != nullptr;
+                if (trace && player_index == 0) {
+                    static bool last_brake = false;
+                    static bool last_driving = false;
+                    const bool brake = (cur_buttons & 0x4000) != 0;
+                    const bool driving = wheel_driving_state.load(std::memory_order_relaxed);
+                    if (brake != last_brake || (brake && driving != last_driving)) {
+                        std::fprintf(stderr, "[wheel-input] Hand Brake B=%d driving=%d\n", brake, driving);
+                        last_brake = brake;
+                        last_driving = driving;
+                    }
+                }
+            }
             if (profile_index_cont == wheel_profile_index && !wheel_driving_state.load(std::memory_order_relaxed)) {
                 const input_mapping_array &mappings = input_profiles[wheel_profile_index].mappings;
                 auto game_menu_button = [&](GameInput virtual_input, uint16_t n64_bit) {
