@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <atomic>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <string>
@@ -481,7 +482,28 @@ namespace recompinput {
                     last_back = wheel_menu_back;
                 }
             }
+            // Keep the two sources separate for diagnostics. A wheel button can also
+            // generate keyboard input through a driver or a shifter utility; OR-ing
+            // before logging hid that second action completely.
+            const uint16_t wheel_buttons = cur_buttons;
+            cur_buttons = 0;
             check_buttons(profile_index_kb);
+            const uint16_t keyboard_buttons = cur_buttons;
+            cur_buttons |= wheel_buttons;
+            if (profile_index_cont == wheel_profile_index && player_index == 0) {
+                static uint16_t last_wheel = 0, last_keyboard = 0;
+                static int input_transitions = 0;
+                if ((wheel_buttons != last_wheel || keyboard_buttons != last_keyboard) && input_transitions++ < 300) {
+                    char line[128];
+                    std::snprintf(line, sizeof(line),
+                                  "[wheel-output] driving=%d wheel=%04X keyboard=%04X combined=%04X",
+                                  (int)wheel_driving, (unsigned)wheel_buttons,
+                                  (unsigned)keyboard_buttons, (unsigned)cur_buttons);
+                    wheel_debug_log(line);
+                }
+                last_wheel = wheel_buttons;
+                last_keyboard = keyboard_buttons;
+            }
 
             check_joystick(profile_index_cont);
             recompinput::apply_joystick_deadzone(cur_x, cur_y, &cur_x, &cur_y);
