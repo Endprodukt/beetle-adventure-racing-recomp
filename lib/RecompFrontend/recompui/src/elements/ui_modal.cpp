@@ -172,7 +172,14 @@ static std::pair<recompinput::InputDevice, int> get_last_input_info() {
         return { recompinput::InputDevice::COUNT, -1 };
     }
 
-    return { device, recompinput::profiles::get_input_profile_for_player(0, device) };
+    int profile = recompinput::profiles::get_input_profile_for_player(0, device);
+    if (profile < 0 || profile >= recompinput::profiles::get_input_profile_count()) {
+        // A controller may be assigned before its profile is created by the SDL add event.
+        // Player one always has the keyboard profile, so show those prompts until it exists.
+        device = recompinput::InputDevice::Keyboard;
+        profile = recompinput::profiles::get_input_profile_for_player(0, device);
+    }
+    return { device, profile };
 }
 
 void Modal::process_event(const Event &e) {
@@ -244,7 +251,9 @@ void Modal::render_menu_actions() {
     last_input_device = current_device;
     last_input_profile = current_profile;
 
-    if (last_input_device == recompinput::InputDevice::COUNT) {
+    if (last_input_device == recompinput::InputDevice::COUNT ||
+        last_input_profile < 0 ||
+        last_input_profile >= recompinput::profiles::get_input_profile_count()) {
         return;
     }
     
