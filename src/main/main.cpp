@@ -21,6 +21,7 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -992,6 +993,10 @@ int main(int argc, char** argv) {
     // ~/.config/beetle-adventure-racing-recomp on Linux), or the exe dir when a portable.txt is present. librecomp
     // writes saves / mod config here.
     recomp::register_config_path(bar::config::get_app_config_directory());
+    if (std::getenv("BAR_DBG_LAYOUT") != nullptr) {
+        std::ofstream trace(recomp::get_config_path() / "layout-trace.log", std::ios::trunc);
+        if (trace) trace << "[BAR_DBG_LAYOUT] game started; waiting for in-game layout values\n";
+    }
 
     // Load persisted graphics settings (or write defaults on first run) and push them into the
     // runtime. This also enables RT64 high-FPS frame interpolation: the default config sets
