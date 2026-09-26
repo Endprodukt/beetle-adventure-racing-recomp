@@ -401,13 +401,15 @@ the decision before serving
 the button poll. In `profiles::get_n64_input`, a selected Wheel profile replaces its own A/B/Start
 bits with the new virtual bindings outside driving, provided the respective new input has at
 least one assignment. Unassigned new inputs retain the old A/B/Start behavior for existing
-profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
-profiles are unchanged. `[wheel-state]` records each driving/menu transition and the four
+profiles. The ordinary keyboard profile is still merged for standard gamepad profiles,
+but not for Wheel: keys are assignable directly in Wheel, and merging Keyboard (SP)
+also made A (Wheel Horn) steer left through its default keyboard mapping. `[wheel-state]`
+records each driving/menu transition and the four
 source fields in `wheel-input.log` for a live check of those transition frames.
 In the in-game Wheel scheme, a live input test found that the button labeled Abort (stored
 under Z in the editor) actually operated the hand brake, while Hand Brake (stored under B)
-did not. During driving only, swap the Wheel profile's B and Z output bits before merging the
-keyboard profile: saved Hand Brake bindings now send Z, and saved Abort bindings send B.
+did not. During driving only, swap the Wheel profile's B and Z output bits:
+saved Hand Brake bindings now send Z, and saved Abort bindings send B.
 The in-game meaning of Abort still needs a live confirmation; menu B continues to use the
 separate Game Menu Back binding. Ordinary gamepad and keyboard profiles are unaffected.
 Until the Hand Brake path is confirmed on hardware, `[wheel-button]` logs raw button-down events
