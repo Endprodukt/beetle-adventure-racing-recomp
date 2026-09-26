@@ -4,13 +4,27 @@
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
 #include "ultramodern/ultramodern.hpp"
+#include "librecomp/game.hpp"
 #include <cmath>
+#include <fstream>
+#include <mutex>
 
 static struct {
     std::list<std::filesystem::path> files_dropped;
 } DropState;
 
 namespace recompinput {
+
+void wheel_debug_log(const std::string& line) {
+    static std::mutex mutex;
+    static bool first_line = true;
+    std::lock_guard lock{mutex};
+    const auto path = recomp::get_config_path() / "wheel-input.log";
+    std::ofstream out(path, first_line ? std::ios::trunc : std::ios::app);
+    first_line = false;
+    if (out) out << line << '\n';
+    std::fprintf(stderr, "%s\n", line.c_str());
+}
 
 void queue_if_enabled(SDL_Event* event) {
     if (!recompinput::all_input_disabled() && !binding::should_skip_events()) {
@@ -332,8 +346,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
             static int wheel_button_logs = 0;
             if (wheel_button_logs++ < 100) {
                 SDL_Joystick* source = SDL_JoystickFromInstanceID(event->jbutton.which);
-                std::fprintf(stderr, "[wheel-button] %s button %u\n",
-                             source ? SDL_JoystickName(source) : "disconnected", event->jbutton.button);
+                const char* name = source ? SDL_JoystickName(source) : nullptr;
+                wheel_debug_log("[wheel-button] " + std::string(name ? name : "disconnected") +
+                                " button " + std::to_string(event->jbutton.button));
             }
         }
         if (binding::is_wheel_being_bound()) {
