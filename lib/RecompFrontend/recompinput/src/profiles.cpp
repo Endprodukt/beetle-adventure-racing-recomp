@@ -38,6 +38,7 @@ static int keyboard_sp_profile_index = -1;
 static int controller_sp_profile_index = -1;
 static int wheel_profile_index = -1;
 static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
+static std::atomic_bool wheel_driving_state{false};
 static std::atomic_int wheel_center_strength{20};
 static std::atomic_int wheel_rumble_strength{50};
 
@@ -446,6 +447,18 @@ namespace recompinput {
             // For a Wheel player, use only the keys explicitly bound in Wheel.
             if (profile_index_cont == wheel_profile_index) profile_index_kb = -1;
             check_buttons(profile_index_cont);
+            if (profile_index_cont == wheel_profile_index && !wheel_driving_state.load(std::memory_order_relaxed)) {
+                const input_mapping_array &mappings = input_profiles[wheel_profile_index].mappings;
+                auto menu_button = [&](GameInput input, uint16_t n64_bit) {
+                    const auto &fields = mappings[static_cast<size_t>(input)];
+                    if (std::any_of(fields.begin(), fields.end(), [](const InputField &field) { return !field.is_empty(); })) {
+                        cur_buttons &= ~n64_bit;
+                        if (recompinput::get_input_digital(player_index, fields)) cur_buttons |= n64_bit;
+                    }
+                };
+                menu_button(GameInput::GAME_MENU_CONFIRM, 0x8000); // N64 A
+                menu_button(GameInput::GAME_MENU_BACK, 0x4000);    // N64 B
+            }
             check_buttons(profile_index_kb);
 
             check_joystick(profile_index_cont);
@@ -458,6 +471,10 @@ namespace recompinput {
         *y_out = std::clamp(cur_y, -1.0f, 1.0f);
 
         return true;
+    }
+
+    void profiles::set_wheel_driving_state(bool driving) {
+        wheel_driving_state.store(driving, std::memory_order_relaxed);
     }
 
     int profiles::get_wheel_center_strength() { return wheel_center_strength.load(std::memory_order_relaxed); }
