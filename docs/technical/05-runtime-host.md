@@ -308,6 +308,11 @@ any pad's controller profile index** changes, and logs every device SDL enumerat
 `game_controller=0/1`) and each player's pad and profile. A pad without an SDL game-controller
 mapping never reaches the list at all; the log says so.
 
+The RecompFrontend menu's controller-button handler must tolerate a profile index of `-1`:
+events can arrive before the first assignment or from a controller without a profile.
+`check_menu_button_pressed` ignores that sentinel and compares only controller-button mappings;
+otherwise the first button event can index outside `input_profiles` and crash the host.
+
 **Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
 has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
 profiles; `wheel_players` records which of BAR's four ports selected it. Auto assignment and a
