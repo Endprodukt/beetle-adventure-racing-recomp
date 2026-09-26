@@ -402,8 +402,11 @@ least one assignment. Unassigned new inputs retain the old A/B/Start behavior fo
 profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
 profiles are unchanged. This classification inherits the HUD's measured race-state assumptions;
 an in-game transition around the first or last racing frame still needs a live game test.
-Set `BAR_WHEEL_INPUT_TRACE=1` to log the sampled Wheel B binding and driving flag on a press;
-this distinguishes a missed SDL binding from a race/menu classification fault.
+Until the Hand Brake path is confirmed on hardware, `[wheel-button]` logs raw button-down events
+(up to 100 per launch) and `[wheel-brake]` logs binding/menu-back transitions, the driving flag
+and the outgoing B bit. A button-down without a binding transition identifies an unmatched
+device or button; `binding=1` with `B_out=0` identifies the race/menu classification; `B_out=1`
+confirms that the N64 B bit leaves the Wheel profile.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
