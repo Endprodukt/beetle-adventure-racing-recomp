@@ -14,6 +14,7 @@ using namespace recompinput;
 
 namespace {
 struct WheelDeviceState {
+    SDL_JoystickID instance_id = -1;
     std::string guid, serial, path;
     std::vector<Uint8> buttons, hats;
     std::vector<Sint16> axes;
@@ -29,6 +30,7 @@ void sample_wheel_devices() {
         SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
         if (!joystick || !SDL_JoystickGetAttached(joystick)) continue;
         WheelDeviceState state;
+        state.instance_id = SDL_JoystickInstanceID(joystick);
         char guid[33]{};
         SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
         state.guid = guid;
@@ -281,6 +283,51 @@ static float wheel_input_state(const InputField& field) {
     default:
         return 0.0f;
     }
+}
+
+float recompinput::wheel_event_binding_value(const SDL_Event& event, const InputField& field) {
+    SDL_JoystickID id;
+    switch (event.type) {
+    case SDL_JOYBUTTONDOWN:
+    case SDL_JOYBUTTONUP: id = event.jbutton.which; break;
+    case SDL_JOYHATMOTION: id = event.jhat.which; break;
+    case SDL_JOYAXISMOTION: id = event.jaxis.which; break;
+    default: return -1.0f;
+    }
+
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return -1.0f;
+    const WheelDeviceState* device = nullptr;
+    for (const auto& candidate : *snapshot) {
+        if (candidate.instance_id == id) {
+            device = &candidate;
+            break;
+        }
+    }
+    if (!device || field.device_guid.empty() || field.device_guid != device->guid ||
+        (!field.device_serial.empty() && field.device_serial != device->serial) ||
+        (field.device_serial.empty() && !field.device_path.empty() && field.device_path != device->path)) {
+        return -1.0f;
+    }
+
+    if (field.input_type == InputType::JoystickButton &&
+        (event.type == SDL_JOYBUTTONDOWN || event.type == SDL_JOYBUTTONUP) &&
+        field.input_id == event.jbutton.button) {
+        return event.type == SDL_JOYBUTTONDOWN ? 1.0f : 0.0f;
+    }
+    if (field.input_type == InputType::JoystickHat && event.type == SDL_JOYHATMOTION &&
+        field.input_id >= 0 && field.input_id / 16 == event.jhat.hat) {
+        const int direction = field.input_id % 16;
+        return direction && (event.jhat.value & direction) == direction ? 1.0f : 0.0f;
+    }
+    if (field.input_type == InputType::JoystickAxis && event.type == SDL_JOYAXISMOTION &&
+        field.input_id != INT32_MIN && std::abs(field.input_id) - 1 == event.jaxis.axis) {
+        const int range = field.input_id < 0 ? field.axis_rest + 32768 : 32767 - field.axis_rest;
+        if (range <= 0) return 0.0f;
+        const int distance = field.input_id < 0 ? field.axis_rest - event.jaxis.value : event.jaxis.value - field.axis_rest;
+        return std::clamp(distance / (float)range, 0.0f, 1.0f);
+    }
+    return -1.0f;
 }
 
 bool recompinput::should_override_keystate(SDL_Scancode key, SDL_Keymod mod) {
