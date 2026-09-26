@@ -418,7 +418,14 @@ namespace recompinput {
 
                 const input_mapping_array &mappings = input_profiles[profile_index].mappings;
                 for (size_t i = 0; i < n64_button_values.size(); i++) {
-                    cur_buttons |= recompinput::get_input_digital(player_index, mappings[(size_t)(GameInput::N64_BUTTON_START) + i]) ? n64_button_values[i] : 0;
+                    const GameInput action = static_cast<GameInput>((size_t)GameInput::N64_BUTTON_START + i);
+                    // Old Wheel configs may contain C-Left/C-Down bindings from before
+                    // the action-only editor hid those rows. Their N64 bits still fired:
+                    // Mirror also emitted C-Down (hand brake), and Horn also emitted
+                    // C-Left (mirror). Ignore only these invisible Wheel mappings.
+                    if (profile_index == wheel_profile_index &&
+                        (action == GameInput::C_LEFT || action == GameInput::C_DOWN)) continue;
+                    cur_buttons |= recompinput::get_input_digital(player_index, mappings[(size_t)action]) ? n64_button_values[i] : 0;
                 }
             };
 
