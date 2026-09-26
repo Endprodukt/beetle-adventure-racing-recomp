@@ -441,6 +441,11 @@ namespace recompinput {
             
             int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
+            // The Wheel profile accepts keyboard keys in its own binding slots. Merging
+            // the ordinary keyboard profile as well makes a key perform two actions:
+            // e.g. Wheel Horn on A also presses the default keyboard's steering left.
+            // For a Wheel player, use only the keys explicitly bound in Wheel.
+            if (profile_index_cont == wheel_profile_index) profile_index_kb = -1;
             check_buttons(profile_index_cont);
             const bool wheel_brake = profile_index_cont == wheel_profile_index &&
                 recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::B]);
