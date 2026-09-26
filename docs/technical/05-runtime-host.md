@@ -365,7 +365,9 @@ feedback.
 The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
 are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
 Hand Brake, Z is Abort, and Start is Pause / Start. Other N64 inputs are omitted from this
-editor; menu inputs remain visible. Stored input IDs and the controller editor do not change.
+editor except the four N64 D-pad directions, shown as Game Menu Up/Down/Left/Right so a raw
+hat can also navigate BAR's own in-game menus. Recomp menu inputs remain visible separately.
+Stored input IDs and the controller editor do not change.
 Raw joystick binding slots use a smaller text font and a shortened device name to fit two
 bindings in each row; the full device name remains in the binding data and the slot title.
 Wheel scanning also accepts SDL keydown events into the same profile as raw wheel inputs;
