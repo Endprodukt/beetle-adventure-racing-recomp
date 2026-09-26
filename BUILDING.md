@@ -75,7 +75,8 @@ host app but **cannot** build MIPS patches (use Homebrew LLVM 18.x for those).
 ## Build — Visual Studio 2022
 
 Install the **Desktop development with C++** workload, the **C++ Clang tools for Windows**
-component and a Windows 10/11 SDK in Visual Studio Installer. Open the repository root with
+component and a Windows 10/11 SDK in Visual Studio Installer. The preset uses the x64
+`clang-cl.exe` from that Visual Studio installation directly. Open the repository root with
 **File → Open → Folder** (not a solution inside `lib/`). The root `CMakePresets.json` selects
 Ninja, x64, Release and `clang-cl`; choose **Windows x64 Release (clang-cl)** in the configuration
 dropdown and **Build game (x64 Release)** in the build preset dropdown. Visual Studio configures

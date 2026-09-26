@@ -12,8 +12,8 @@
         "strategy": "external"
       },
       "environment": {
-        "CC": "clang-cl",
-        "CXX": "clang-cl"
+        "CC": "$env{VCINSTALLDIR}Tools/Llvm/x64/bin/clang-cl.exe",
+        "CXX": "$env{VCINSTALLDIR}Tools/Llvm/x64/bin/clang-cl.exe"
       },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
