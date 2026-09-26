@@ -151,9 +151,9 @@ symptoms nowhere near the cause, so it must not be silent. The per-load success 
 ## Hardware-register stubs
 
 The separate low-level SI handler in `src/main/os_unimpl_stubs.cpp` also observes BAR's
-`gGameSettings` while answering controller reads. In the frontend build it publishes whether
-an unpaused race is active before the N64 button mask is resolved; the Wheel profile can then
-choose driving or game-menu bindings. The state criteria and offsets are in [05](05-runtime-host.md).
+`gGameSettings` for rendering and the attract-sequence frame cap while answering controller
+reads. Wheel input no longer uses this state: its bindings produce the same N64 inputs in
+menus and races. See [05](05-runtime-host.md).
 
 A handful of libultra functions were recompiled raw (the decomp did not symbol-match them, so they
 were never listed in `stubs`/`ignored`). They `MEM_W`/`MEM_B` KSEG1 register addresses —
