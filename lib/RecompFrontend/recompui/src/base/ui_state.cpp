@@ -20,6 +20,7 @@
 #include "recompui/config.h"
 #include "recompui/program_config.h"
 #include "recompinput/recompinput.h"
+#include "recompinput/input_state.h"
 #include "recompinput/profiles.h"
 
 #include "librecomp/game.hpp"
@@ -622,6 +623,40 @@ int cont_axis_to_key(SDL_ControllerAxisEvent& axis, float value) {
     return 0;
 }
 
+// Wheel devices are raw SDL joysticks, so their buttons never enter the SDL
+// GameController menu mapping above. Use the selected wheel profile's menu
+// bindings, including keyboard bindings stored alongside the raw inputs.
+int wheel_menu_event_to_key(const SDL_Event& event) {
+    if (!recompinput::profiles::is_wheel_selected(0)) return 0;
+    const int profile = recompinput::profiles::get_input_profile_for_player(0, recompinput::InputDevice::Controller);
+    if (profile != recompinput::profiles::get_wheel_profile_index()) return 0;
+
+    static std::array<bool, static_cast<size_t>(recompinput::GameInput::COUNT)> pressed{};
+    for (const auto& [key, action] : recompui::menu_action_mapping::rml_key_to_action) {
+        float value = -1.0f;
+        for (size_t i = 0; i < recompinput::num_bindings_per_input; ++i) {
+            const auto& binding = recompinput::profiles::get_input_binding(profile, action.input, i);
+            if (binding.input_type == recompinput::InputType::Keyboard &&
+                (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                binding.input_id == event.key.keysym.scancode) {
+                if (event.type == SDL_KEYUP) value = std::max(value, 0.0f);
+                else if (!event.key.repeat) value = 1.0f;
+            } else {
+                value = std::max(value, recompinput::wheel_event_binding_value(event, binding));
+            }
+        }
+        if (value < 0.0f) continue;
+        bool& was_pressed = pressed[static_cast<size_t>(action.input)];
+        if (value < 0.15f) {
+            was_pressed = false;
+        } else if (value >= 0.5f && !was_pressed) {
+            was_pressed = true;
+            return action.sdl;
+        }
+    }
+    return 0;
+}
+
 void apply_background_input_mode() {
     static bool initialized = false;
     static bool last_input_mode = false;
@@ -690,6 +725,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
     while (recompui::try_deque_event(cur_event)) {
         bool context_capturing_input = recompui::is_context_capturing_input();
         bool context_capturing_mouse = recompui::is_context_capturing_mouse();
+        const int wheel_menu_key = wheel_menu_event_to_key(cur_event);
 
         // Handle up button events even when input is disabled to avoid missing them during binding.
         if (cur_event.type == SDL_EventType::SDL_CONTROLLERBUTTONUP) {
@@ -701,6 +737,10 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
 
         if (!all_input_is_disabled) {
             bool is_mouse_input = false;
+            if (wheel_menu_key && context_capturing_input &&
+                (cur_event.type != SDL_KEYDOWN || cur_event.key.keysym.sym != wheel_menu_key)) {
+                ui_state->context->ProcessKeyDown(convert_sdl_to_rml(wheel_menu_key), 0);
+            }
             // Implement some additional behavior for specific events on top of what RmlUi normally does with them.
             switch (cur_event.type) {
             case SDL_EventType::SDL_MOUSEMOTION: {
@@ -744,6 +784,14 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 cont_interacted = true;
                 break;
             }
+            case SDL_EventType::SDL_JOYBUTTONDOWN:
+            case SDL_EventType::SDL_JOYHATMOTION:
+            case SDL_EventType::SDL_JOYAXISMOTION:
+                if (wheel_menu_key) {
+                    non_mouse_interacted = true;
+                    cont_interacted = true;
+                }
+                break;
             case SDL_EventType::SDL_KEYDOWN:
                 // Exclude the ESC key from triggering keyboard mode.
                 if (cur_event.key.keysym.scancode != SDL_Scancode::SDL_SCANCODE_ESCAPE) {
@@ -815,7 +863,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
 
         // If the config menu isn't open and the game has been started and either the escape key or select button are pressed, open the config menu.
         if (!config_was_open && ultramodern::is_game_started()) {
-            bool open_config = false;
+            bool open_config = wheel_menu_key == SDLK_ESCAPE;
 
             switch (cur_event.type) {
             case SDL_EventType::SDL_KEYDOWN:
