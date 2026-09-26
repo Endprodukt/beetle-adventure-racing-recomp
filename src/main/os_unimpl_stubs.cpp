@@ -21,6 +21,8 @@
 #include <chrono>   // R6 diagnostic: BAR_DBG_FPS loop-rate counter (remove after)
 #include <cstdio>   // R6 diagnostic
 #include <cstring>  // BAR_BURST_ON_ROLL: memcpy/strchr/strcmp for the burst-capture spec parse
+#include <fstream>  // BAR_DBG_LAYOUT: log a GUI-subsystem build without a console
+#include <librecomp/game.hpp>
 
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
@@ -344,11 +346,19 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
               first = false;
               previous_state = state;
               std::memcpy(previous, snapshot, sizeof(snapshot));
-              std::fprintf(stderr, "[BAR_DBG_LAYOUT] state=%d menu@8002CD40=%02X%02X%02X%02X active@8002D064=",
-                           state, snapshot[0], snapshot[1], snapshot[2], snapshot[3]);
-              for (int i = 4; i < 20; ++i) std::fprintf(stderr, "%02X", snapshot[i]);
-              std::fputc('\n', stderr);
+              char line[160];
+              int length = std::snprintf(line, sizeof(line),
+                  "[BAR_DBG_LAYOUT] state=%d menu@8002CD40=%02X%02X%02X%02X active@8002D064=",
+                  state, snapshot[0], snapshot[1], snapshot[2], snapshot[3]);
+              for (int i = 4; i < 20 && length < (int)sizeof(line) - 3; ++i)
+                  length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
+              std::fprintf(stderr, "%s\n", line);
               std::fflush(stderr);
+              static bool first_line = true;
+              std::ofstream out(recomp::get_config_path() / "layout-trace.log",
+                                first_line ? std::ios::trunc : std::ios::app);
+              first_line = false;
+              if (out) out << line << '\n';
           }
       } }
     // R6 diagnostic (env-gated BAR_DBG_FPS): the menu/game main loop polls the controller once per
