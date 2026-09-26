@@ -390,18 +390,20 @@ BAR receives only the N64 button mask; A, B and Start double as driving and in-g
 commands. The Wheel profile therefore adds three *virtual* inputs: Game Menu Confirm (A),
 Game Menu Back (B) and Game Menu Start. They are persisted in `controls.json` with the other
 bindings but are not direct N64 buttons. At the SI hook, `gGameSettings` supplies the same
-`currentGameState`/`raceState`/`introReplayState`/per-car-racing fields used by HUD anchoring,
-plus `pauseFlag` at +0x86. State 5 after setup, phase 0 or 3, replay 0 and pause flag clear
-counts as driving; after a human racing byte has been observed in that state, its later clearing
-also ends driving. The earlier assumption that the inferred per-car bytes must already be
-nonzero in every active race could classify an entire race as a menu and replace Wheel Hand
-Brake B with Game Menu Back. The hook publishes that decision before serving
+`currentGameState`/`raceState`/`introReplayState` fields used by HUD anchoring,
+plus `pauseFlag` at +0x86. State 5, phase 0 or 3, replay 0 and pause flag clear
+counts as driving. Unlike HUD anchoring, input classification does not depend on
+whether a setup phase was observed or on the inferred per-car-racing bytes: both could
+change or reset during a race and intermittently select menu bindings. This direct rule
+may temporarily classify the first loading frame or the result transition as driving;
+the game state fields do not yet identify those frames separately. The hook publishes
+the decision before serving
 the button poll. In `profiles::get_n64_input`, a selected Wheel profile replaces its own A/B/Start
 bits with the new virtual bindings outside driving, provided the respective new input has at
 least one assignment. Unassigned new inputs retain the old A/B/Start behavior for existing
 profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
-profiles are unchanged. This classification inherits the HUD's measured race-state assumptions;
-an in-game transition around the first or last racing frame still needs a live game test.
+profiles are unchanged. `[wheel-state]` records each driving/menu transition and the four
+source fields in `wheel-input.log` for a live check of those transition frames.
 In the in-game Wheel scheme, a live input test found that the button labeled Abort (stored
 under Z in the editor) actually operated the hand brake, while Hand Brake (stored under B)
 did not. During driving only, swap the Wheel profile's B and Z output bits before merging the
