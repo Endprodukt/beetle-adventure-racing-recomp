@@ -159,6 +159,9 @@ bool TabbedModal::close() {
 }
 
 static std::pair<recompinput::InputDevice, int> get_last_input_info() {
+    if (recompinput::profiles::is_wheel_selected(0)) {
+        return { recompinput::InputDevice::Controller, recompinput::profiles::get_wheel_profile_index() };
+    }
     if (recompinput::players::is_single_player_mode()) {
         if (get_cont_active()) {
             return { recompinput::InputDevice::Controller, recompinput::profiles::get_sp_controller_profile_index() };
