@@ -97,7 +97,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
             if (keyevent->keysym.scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
                 binding::stop_scanning();
             }
-            else if (binding::get_scanning_device() == InputDevice::Keyboard) {
+            else if (!keyevent->repeat &&
+                     (binding::get_scanning_device() == InputDevice::Keyboard || binding::is_wheel_being_bound())) {
                 binding::set_scanned_input({ InputType::Keyboard, keyevent->keysym.scancode });
             }
         }
