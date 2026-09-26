@@ -402,14 +402,21 @@ least one assignment. Unassigned new inputs retain the old A/B/Start behavior fo
 profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
 profiles are unchanged. This classification inherits the HUD's measured race-state assumptions;
 an in-game transition around the first or last racing frame still needs a live game test.
+In the in-game Wheel scheme, a live input test found that the button labeled Abort (stored
+under Z in the editor) actually operated the hand brake, while Hand Brake (stored under B)
+did not. During driving only, swap the Wheel profile's B and Z output bits before merging the
+keyboard profile: saved Hand Brake bindings now send Z, and saved Abort bindings send B.
+The in-game meaning of Abort still needs a live confirmation; menu B continues to use the
+separate Game Menu Back binding. Ordinary gamepad and keyboard profiles are unaffected.
 Until the Hand Brake path is confirmed on hardware, `[wheel-button]` logs raw button-down events
 (up to 100 per launch) and `[wheel-brake]` logs binding/menu-back transitions, the driving flag
 and the outgoing B bit. Release builds use the Windows subsystem and have no stderr console;
 both line types are also saved to `<app config>/wheel-input.log` (the same directory as
 `controls.json`), truncated at the first diagnostic line on each run. A button-down without a
 binding transition identifies an unmatched
-device or button; `binding=1` with `B_out=0` identifies the race/menu classification; `B_out=1`
-confirms that the N64 B bit leaves the Wheel profile.
+device or button; `binding=1` with `Z_out=0` in a race identifies the race/menu classification;
+`Z_out=1` confirms that the Wheel scheme's hand-brake bit leaves the Wheel profile. `B_out`
+continues to show the game's Back button outside a race.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
