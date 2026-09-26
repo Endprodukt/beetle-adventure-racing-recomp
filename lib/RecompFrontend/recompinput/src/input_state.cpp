@@ -15,6 +15,7 @@ using namespace recompinput;
 namespace {
 struct WheelDeviceState {
     SDL_JoystickID instance_id = -1;
+    bool is_game_controller = false;
     std::string guid, serial, path;
     std::vector<Uint8> buttons, hats;
     std::vector<Sint16> axes;
@@ -31,6 +32,7 @@ void sample_wheel_devices() {
         if (!joystick || !SDL_JoystickGetAttached(joystick)) continue;
         WheelDeviceState state;
         state.instance_id = SDL_JoystickInstanceID(joystick);
+        state.is_game_controller = SDL_IsGameController(i);
         char guid[33]{};
         SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
         state.guid = guid;
@@ -328,6 +330,16 @@ float recompinput::wheel_event_binding_value(const SDL_Event& event, const Input
         return std::clamp(distance / (float)range, 0.0f, 1.0f);
     }
     return -1.0f;
+}
+
+bool recompinput::is_raw_joystick_hat_event(const SDL_Event& event) {
+    if (event.type != SDL_JOYHATMOTION) return false;
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return false;
+    for (const auto& device : *snapshot) {
+        if (device.instance_id == event.jhat.which) return !device.is_game_controller;
+    }
+    return false;
 }
 
 bool recompinput::should_override_keystate(SDL_Scancode key, SDL_Keymod mod) {
