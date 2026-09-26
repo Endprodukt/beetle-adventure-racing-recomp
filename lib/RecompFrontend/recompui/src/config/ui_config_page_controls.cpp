@@ -9,6 +9,7 @@
 #include "elements/ui_slider.h"
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
+#include "librecomp/game.hpp"
 
 namespace recompui {
 
