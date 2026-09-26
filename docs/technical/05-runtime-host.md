@@ -374,6 +374,20 @@ Wheel scanning also accepts SDL keydown events into the same profile as raw whee
 Escape cancels the scan. The runtime's input readers already evaluate keyboard fields in
 controller profiles, so a wheel action can be bound to a key in either slot.
 
+BAR receives only the N64 button mask; A, B and Start double as driving and in-game-menu
+commands. The Wheel profile therefore adds three *virtual* inputs: Game Menu Confirm (A),
+Game Menu Back (B) and Game Menu Start. They are persisted in `controls.json` with the other
+bindings but are not direct N64 buttons. At the SI hook, `gGameSettings` supplies the same
+`currentGameState`/`raceState`/`introReplayState`/per-car-racing fields used by HUD anchoring,
+plus `pauseFlag` at +0x86. Only state 5 after setup, phase 0 or 3, replay 0, a human still
+racing and pause flag clear counts as driving. The hook publishes that decision before serving
+the button poll. In `profiles::get_n64_input`, a selected Wheel profile replaces its own A/B/Start
+bits with the new virtual bindings outside driving, provided the respective new input has at
+least one assignment. Unassigned new inputs retain the old A/B/Start behavior for existing
+profiles. The merged keyboard profile is read afterwards and is unchanged; standard gamepad
+profiles are unchanged. This classification inherits the HUD's measured race-state assumptions;
+an in-game transition around the first or last racing frame still needs a live game test.
+
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
 Two consequences, both measured in `controls.json` and in play with pad = player one, keyboard =
