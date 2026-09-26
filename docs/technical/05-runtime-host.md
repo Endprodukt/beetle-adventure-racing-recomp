@@ -307,6 +307,9 @@ to choose.
 any pad's controller profile index** changes, and logs every device SDL enumerates (with
 `game_controller=0/1`) and each player's pad and profile. A pad without an SDL game-controller
 mapping never reaches the list at all; the log says so.
+If SDL has enumerated a game controller before its per-device profile exists, auto assignment
+temporarily uses the initialized `Controller (SP)` profile. A later `refresh_players` pass replaces
+that fallback when the device-specific profile appears. Manual assignment uses the same fallback.
 
 The RecompFrontend menu's controller-button handler must tolerate a profile index of `-1`:
 events can arrive before the first assignment or from a controller without a profile.
