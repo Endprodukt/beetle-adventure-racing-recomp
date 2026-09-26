@@ -329,19 +329,22 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
     // Diagnose a saved in-game Wheel layout that is displayed as selected but only starts
     // working after cycling the game's Options -> Controller setting. These are two distinct
     // game globals, independent of RecompFrontend's wheel_players in controls.json. Capture
-    // their nearby bytes and the adjacent custom button map on change; the decomp has not
-    // established the exact field widths.
+    // their nearby bytes, the custom button map, and the active 36-byte preset table on change.
+    // func_selection_0040D844 copies 0x24 bytes from a selected preset into 0x8002CCB0
+    // for player one; logging only 0x8002D01C missed that actual apply step.
     // BAR_DBG_LAYOUT=1, then compare this trace before and after toggling the game option.
     { static const bool dbg = std::getenv("BAR_DBG_LAYOUT") != nullptr;
       if (dbg) {
           constexpr int64_t menu_layout = (int64_t)(int32_t)0x8002CD40;
           constexpr int64_t active_layout = (int64_t)(int32_t)0x8002D064;
           constexpr int64_t custom_buttons = (int64_t)(int32_t)0x8002D01C;
-          unsigned char snapshot[92];
+          constexpr int64_t applied_preset = (int64_t)(int32_t)0x8002CCB0;
+          unsigned char snapshot[128];
           for (int i = 0; i < 4; ++i) snapshot[i] = (unsigned char)MEM_BU(i, menu_layout);
           for (int i = 0; i < 16; ++i) snapshot[4 + i] = (unsigned char)MEM_BU(i, active_layout);
           for (int i = 0; i < 72; ++i) snapshot[20 + i] = (unsigned char)MEM_BU(i, custom_buttons);
-          static unsigned char previous[92]{};
+          for (int i = 0; i < 36; ++i) snapshot[92 + i] = (unsigned char)MEM_BU(i, applied_preset);
+          static unsigned char previous[128]{};
           static bool first = true;
           static int previous_state = -1;
           const int state = (int)MEM_W(0xA4, (int64_t)(int32_t)0x80025CF0);
@@ -349,7 +352,7 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
               first = false;
               previous_state = state;
               std::memcpy(previous, snapshot, sizeof(snapshot));
-              char line[320];
+              char line[512];
               int length = std::snprintf(line, sizeof(line),
                   "[BAR_DBG_LAYOUT] state=%d menu@8002CD40=%02X%02X%02X%02X active@8002D064=",
                   state, snapshot[0], snapshot[1], snapshot[2], snapshot[3]);
@@ -357,6 +360,9 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
                   length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
               length += std::snprintf(line + length, sizeof(line) - length, " map@8002D01C=");
               for (int i = 20; i < 92 && length < (int)sizeof(line) - 3; ++i)
+                  length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
+              length += std::snprintf(line + length, sizeof(line) - length, " applied@8002CCB0=");
+              for (int i = 92; i < 128 && length < (int)sizeof(line) - 3; ++i)
                   length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
               std::fprintf(stderr, "%s\n", line);
               std::fflush(stderr);
