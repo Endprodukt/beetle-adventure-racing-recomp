@@ -324,6 +324,33 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
     // controller poll (per frame) in both the menus and a race, the right cadence for the
     // "every frame" cheat writes (unlocks, debug-options flags). No-op when nothing is enabled.
     bar_cheats::apply_frame(rdram);
+    // Diagnose a saved in-game Wheel layout that is displayed as selected but only starts
+    // working after cycling the game's Options -> Controller setting. These are two distinct
+    // game globals, independent of RecompFrontend's wheel_players in controls.json. Capture
+    // their nearby bytes on change; the decomp has not established their exact field widths.
+    // BAR_DBG_LAYOUT=1, then compare this trace before and after toggling the game option.
+    { static const bool dbg = std::getenv("BAR_DBG_LAYOUT") != nullptr;
+      if (dbg) {
+          constexpr int64_t menu_layout = (int64_t)(int32_t)0x8002CD40;
+          constexpr int64_t active_layout = (int64_t)(int32_t)0x8002D064;
+          unsigned char snapshot[20];
+          for (int i = 0; i < 4; ++i) snapshot[i] = (unsigned char)MEM_BU(i, menu_layout);
+          for (int i = 0; i < 16; ++i) snapshot[4 + i] = (unsigned char)MEM_BU(i, active_layout);
+          static unsigned char previous[20]{};
+          static bool first = true;
+          static int previous_state = -1;
+          const int state = (int)MEM_W(0xA4, (int64_t)(int32_t)0x80025CF0);
+          if (first || state != previous_state || std::memcmp(snapshot, previous, sizeof(snapshot)) != 0) {
+              first = false;
+              previous_state = state;
+              std::memcpy(previous, snapshot, sizeof(snapshot));
+              std::fprintf(stderr, "[BAR_DBG_LAYOUT] state=%d menu@8002CD40=%02X%02X%02X%02X active@8002D064=",
+                           state, snapshot[0], snapshot[1], snapshot[2], snapshot[3]);
+              for (int i = 4; i < 20; ++i) std::fprintf(stderr, "%02X", snapshot[i]);
+              std::fputc('\n', stderr);
+              std::fflush(stderr);
+          }
+      } }
     // R6 diagnostic (env-gated BAR_DBG_FPS): the menu/game main loop polls the controller once per
     // iteration, so this hook's call rate == the loop rate. The page-slide animation advances per loop
     // iteration; if this is >> native 60 Hz the slide completes in ~1 display frame ("disabled"-looking).
