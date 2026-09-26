@@ -68,6 +68,18 @@ static int get_or_create_controller_profile_index(ControllerGUID guid) {
     return profile_index;
 }
 
+int ensure_controller_profile(SDL_GameController* controller) {
+    if (!controller) return -1;
+    const ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);
+    if (guid.hash == 0) return -1;
+    int profile_index = profiles::get_controller_profile_index_from_sdl_controller(controller);
+    if (profile_index < 0) {
+        profile_index = get_or_create_controller_profile_index(guid);
+        profiles::add_controller(guid, profile_index);
+    }
+    return profile_index;
+}
+
 void purge_deferred_controller_profiles() {
     for (auto &guid_pair : deferred_controller_profiles) {
         int profile_index = get_or_create_controller_profile_index(guid_pair.second);
@@ -155,12 +167,19 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_JOYBUTTONDOWN:
         if (binding::is_wheel_being_bound()) {
             binding::set_scanned_input(wheel_input(event->jbutton.which, InputType::JoystickButton, event->jbutton.button));
+        } else {
+            queue_if_enabled(event);
         }
+        break;
+    case SDL_EventType::SDL_JOYBUTTONUP:
+        queue_if_enabled(event);
         break;
     case SDL_EventType::SDL_JOYHATMOTION:
         if (binding::is_wheel_being_bound() && event->jhat.value != SDL_HAT_CENTERED) {
             binding::set_scanned_input(wheel_input(event->jhat.which, InputType::JoystickHat,
                 event->jhat.hat * 16 + event->jhat.value));
+        } else if (!binding::is_wheel_being_bound()) {
+            queue_if_enabled(event);
         }
         break;
     case SDL_EventType::SDL_JOYAXISMOTION:
@@ -172,6 +191,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 movement > 0 ? event->jaxis.axis + 1 : -event->jaxis.axis - 1);
             field.axis_rest = rest;
             binding::set_scanned_input(field);
+        } else {
+            queue_if_enabled(event);
         }
         break;
     case SDL_EventType::SDL_QUIT: {
