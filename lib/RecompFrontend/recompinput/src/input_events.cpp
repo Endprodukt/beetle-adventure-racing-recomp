@@ -4,6 +4,7 @@
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
 #include "ultramodern/ultramodern.hpp"
+#include <cmath>
 
 static struct {
     std::list<std::filesystem::path> files_dropped;
@@ -27,6 +28,7 @@ static struct {
     SDL_Haptic* handle = nullptr;
     int spring_effect = -1;
     int spring_strength = -1;
+    int spring_uploaded_strength = -1;
     bool autocenter = false;
     bool rumble = false;
     bool open_failed = false;
@@ -43,6 +45,7 @@ static void close_wheel_ffb() {
     wheel_ffb.id = -1;
     wheel_ffb.spring_effect = -1;
     wheel_ffb.spring_strength = -1;
+    wheel_ffb.spring_uploaded_strength = -1;
 }
 
 static bool matches_wheel_binding(SDL_Joystick* joystick, const InputField& field) {
@@ -59,6 +62,40 @@ static bool matches_wheel_binding(SDL_Joystick* joystick, const InputField& fiel
         return path && field.device_path == path;
     }
     return true;
+}
+
+static SDL_HapticEffect center_spring_effect(int percent) {
+    SDL_HapticEffect effect{};
+    effect.type = SDL_HAPTIC_SPRING;
+    effect.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
+    effect.condition.length = SDL_HAPTIC_INFINITY;
+    effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
+    effect.condition.right_coeff[0] = effect.condition.left_coeff[0] =
+        static_cast<Sint16>(0x7FFF * percent / 100);
+    return effect;
+}
+
+static void set_center_spring(int percent) {
+    if (wheel_ffb.spring_effect >= 0) {
+        if (percent == 0) {
+            SDL_HapticStopEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+            return;
+        }
+        SDL_HapticEffect effect = center_spring_effect(percent);
+        if ((percent == wheel_ffb.spring_uploaded_strength ||
+             SDL_HapticUpdateEffect(wheel_ffb.handle, wheel_ffb.spring_effect, &effect) == 0) &&
+            SDL_HapticRunEffect(wheel_ffb.handle, wheel_ffb.spring_effect, 1) == 0) {
+            wheel_ffb.spring_uploaded_strength = percent;
+            return;
+        }
+        std::fprintf(stderr, "[wheel-ffb] spring failed: %s\n", SDL_GetError());
+        SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+        wheel_ffb.spring_effect = -1;
+    }
+    if (wheel_ffb.autocenter && SDL_HapticSetAutocenter(wheel_ffb.handle, percent) != 0) {
+        std::fprintf(stderr, "[wheel-ffb] autocenter failed: %s\n", SDL_GetError());
+        wheel_ffb.autocenter = false;
+    }
 }
 
 static SDL_Joystick* steering_joystick() {
@@ -104,45 +141,41 @@ void update_wheel_force_feedback(uint16_t game_rumble, bool rumble_changed) {
             return;
         }
         const unsigned int features = SDL_HapticQuery(wheel_ffb.handle);
+        wheel_ffb.autocenter = (features & SDL_HAPTIC_AUTOCENTER) != 0;
+        // A wheel's position-dependent spring is preferable to a driver's global
+        // autocenter setting, which some drivers claim but silently ignore.
+        if (features & SDL_HAPTIC_SPRING) {
+            SDL_HapticEffect effect = center_spring_effect(profiles::get_wheel_center_strength());
+            wheel_ffb.spring_effect = SDL_HapticNewEffect(wheel_ffb.handle, &effect);
+            if (wheel_ffb.spring_effect >= 0)
+                wheel_ffb.spring_uploaded_strength = profiles::get_wheel_center_strength();
+            else
+                std::fprintf(stderr, "[wheel-ffb] spring upload failed: %s\n", SDL_GetError());
+        }
         wheel_ffb.rumble = SDL_HapticRumbleSupported(wheel_ffb.handle) > 0 &&
                            SDL_HapticRumbleInit(wheel_ffb.handle) == 0;
-        wheel_ffb.autocenter = (features & SDL_HAPTIC_AUTOCENTER) != 0;
-        if (!wheel_ffb.autocenter && (features & SDL_HAPTIC_SPRING)) {
-            SDL_HapticEffect effect{};
-            effect.type = SDL_HAPTIC_SPRING;
-            effect.condition.length = SDL_HAPTIC_INFINITY;
-            effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
-            effect.condition.right_coeff[0] = effect.condition.left_coeff[0] = 0x7FFF;
-            wheel_ffb.spring_effect = SDL_HapticNewEffect(wheel_ffb.handle, &effect);
-        }
-        std::fprintf(stderr, "[wheel-ffb] %s: spring=%s, rumble=%s\n", SDL_JoystickName(joystick),
-                     wheel_ffb.autocenter ? "autocenter" : wheel_ffb.spring_effect >= 0 ? "condition" : "unsupported",
+        std::fprintf(stderr, "[wheel-ffb] %s: features=0x%X spring=%s, rumble=%s\n", SDL_JoystickName(joystick),
+                     features, wheel_ffb.spring_effect >= 0 ? "condition" : wheel_ffb.autocenter ? "autocenter" : "unsupported",
                      wheel_ffb.rumble ? "available" : "unsupported");
     }
 
     const int center = profiles::get_wheel_center_strength();
     if (center != wheel_ffb.spring_strength) {
         wheel_ffb.spring_strength = center;
-        if (wheel_ffb.autocenter) {
-            SDL_HapticSetAutocenter(wheel_ffb.handle, center);
-        } else if (wheel_ffb.spring_effect >= 0) {
-            if (center == 0) {
-                SDL_HapticStopEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
-            } else {
-                SDL_HapticEffect effect{};
-                effect.type = SDL_HAPTIC_SPRING;
-                effect.condition.length = SDL_HAPTIC_INFINITY;
-                effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
-                effect.condition.right_coeff[0] = effect.condition.left_coeff[0] =
-                    static_cast<Sint16>(0x7FFF * center / 100);
-                if (SDL_HapticUpdateEffect(wheel_ffb.handle, wheel_ffb.spring_effect, &effect) == 0)
-                    SDL_HapticRunEffect(wheel_ffb.handle, wheel_ffb.spring_effect, 1);
-            }
-        }
+        set_center_spring(center);
     }
     if (rumble_changed && wheel_ffb.rumble) {
-        const float strength = (game_rumble / 65535.0f) * (profiles::get_wheel_rumble_strength() / 100.0f);
-        if (strength > 0.0f) SDL_HapticRumblePlay(wheel_ffb.handle, strength, 250);
+        // A wheel's force motor responds poorly to the tiny duty-cycle levels
+        // of an N64 Rumble Pak. Preserve zero and full scale, lift the quiet hits.
+        const float level = game_rumble / 65535.0f;
+        const float strength = std::min(1.0f, 1.5f * std::pow(level, 0.4f)) *
+                               (profiles::get_wheel_rumble_strength() / 100.0f);
+        if (strength > 0.0f) {
+            if (SDL_HapticRumblePlay(wheel_ffb.handle, strength, 250) != 0) {
+                std::fprintf(stderr, "[wheel-ffb] rumble playback failed: %s\n", SDL_GetError());
+                wheel_ffb.rumble = false;
+            }
+        }
         else SDL_HapticRumbleStop(wheel_ffb.handle);
     }
 }
