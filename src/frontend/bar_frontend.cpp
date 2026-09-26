@@ -529,10 +529,6 @@ uint16_t bar::frontend::poll_port(int port, int8_t* stick_x, int8_t* stick_y) {
     return pressed;
 }
 
-void bar::frontend::set_wheel_driving_state(bool driving) {
-    recompinput::profiles::set_wheel_driving_state(driving);
-}
-
 bool bar::frontend::menu_capturing_input() {
     return recompui::is_context_capturing_input();
 }
