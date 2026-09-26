@@ -432,8 +432,11 @@ void refresh_players() {
                  recompinput::players::get_number_of_assigned_players(),
                  recompinput::players::get_number_of_assigned_players() == 1 ? "" : "s");
     for (size_t i = 0; i < connected.size(); i++) {
-        std::fprintf(stderr, "[beetle-adventure-racing-recomp]   player %zu: %s (controller profile %d)\n",
-                     i + 1, SDL_GameControllerName(connected[i]), pad_profiles[i]);
+        const int active_profile = recompinput::profiles::get_input_profile_for_player(
+            (int)i, recompinput::InputDevice::Controller);
+        std::fprintf(stderr, "[beetle-adventure-racing-recomp]   player %zu: %s "
+                             "(active controller profile %d, device profile %d)\n",
+                     i + 1, SDL_GameControllerName(connected[i]), active_profile, pad_profiles[i]);
     }
     std::fflush(stderr);
 }
