@@ -571,10 +571,15 @@ Rml::Input::KeyIdentifier convert_sdl_to_rml(int sdl_key) {
 }
 
 bool check_menu_button_pressed(int profile_index, recompinput::GameInput input, int32_t event_button) {
+    // A controller can report its first button before refresh_players has assigned its profile,
+    // or it may have no profile at all. Never index input_profiles with the sentinel -1.
+    if (profile_index < 0 || profile_index >= recompinput::profiles::get_input_profile_count()) {
+        return false;
+    }
     auto menuBinding0 = recompinput::profiles::get_input_binding(profile_index, input, 0);
     auto menuBinding1 = recompinput::profiles::get_input_binding(profile_index, input, 1);
-    if ((menuBinding0.input_type != recompinput::InputType::None && event_button == menuBinding0.input_id) ||
-        (menuBinding1.input_type != recompinput::InputType::None && event_button == menuBinding1.input_id)) {
+    if ((menuBinding0.input_type == recompinput::InputType::ControllerDigital && event_button == menuBinding0.input_id) ||
+        (menuBinding1.input_type == recompinput::InputType::ControllerDigital && event_button == menuBinding1.input_id)) {
         return true;
     }
     return false;
