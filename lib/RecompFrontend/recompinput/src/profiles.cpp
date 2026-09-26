@@ -416,12 +416,10 @@ namespace recompinput {
                 const input_mapping_array &mappings = input_profiles[profile_index].mappings;
                 for (size_t i = 0; i < n64_button_values.size(); i++) {
                     const GameInput action = static_cast<GameInput>((size_t)GameInput::N64_BUTTON_START + i);
-                    // Ignore old Wheel mappings for actions removed from the Wheel
-                    // editor. Existing controls.json files can still contain them.
+                    // Ignore old Wheel mappings for C-Left/C-Down, which are no
+                    // longer in the Wheel editor but may remain in controls.json.
                     if (profile_index == wheel_profile_index &&
-                        (action == GameInput::C_LEFT || action == GameInput::C_DOWN ||
-                         action == GameInput::DPAD_UP || action == GameInput::DPAD_DOWN ||
-                         action == GameInput::DPAD_LEFT || action == GameInput::DPAD_RIGHT)) continue;
+                        (action == GameInput::C_LEFT || action == GameInput::C_DOWN)) continue;
                     cur_buttons |= recompinput::get_input_digital(player_index, mappings[(size_t)action]) ? n64_button_values[i] : 0;
                 }
             };
