@@ -138,8 +138,8 @@ void GameInputRow::update_bindings(BindingList &new_bindings) {
         binding_buttons[i]->set_binding(new_bindings[i].to_string(),
             new_bindings[i].input_type == recompinput::InputType::JoystickButton ||
             new_bindings[i].input_type == recompinput::InputType::JoystickAxis ||
-            new_bindings[i].input_type == recompinput::InputType::JoystickHat);
-        binding_buttons[i]->set_attribute("title", new_bindings[i].device_name);
+            new_bindings[i].input_type == recompinput::InputType::JoystickHat,
+            new_bindings[i].device_name);
         bindings[i] = new_bindings[i];
     }
 }
