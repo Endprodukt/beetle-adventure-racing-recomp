@@ -135,7 +135,11 @@ void GameInputRow::update_bindings(BindingList &new_bindings) {
             continue;
         }
 
-        binding_buttons[i]->set_binding(new_bindings[i].to_string());
+        binding_buttons[i]->set_binding(new_bindings[i].to_string(),
+            new_bindings[i].input_type == recompinput::InputType::JoystickButton ||
+            new_bindings[i].input_type == recompinput::InputType::JoystickAxis ||
+            new_bindings[i].input_type == recompinput::InputType::JoystickHat);
+        binding_buttons[i]->set_attribute("title", new_bindings[i].device_name);
         bindings[i] = new_bindings[i];
     }
 }
@@ -196,6 +200,35 @@ void ConfigPageControls::create_game_input_contexts() {
     game_input_sections.menu.contexts.clear();
     game_input_sections.other.clear();
 
+    const bool wheel_profile = selected_profile_index == recompinput::profiles::get_wheel_profile_index();
+    if (wheel_profile) {
+        // BAR's Wheel controller layout, presented in driving order. These are the
+        // same persisted N64 inputs; only the labels and visible rows differ.
+        struct WheelAction { recompinput::GameInput input; const char *name; };
+        constexpr WheelAction actions[] = {
+            { recompinput::GameInput::X_AXIS_NEG, "Wheel Left" },
+            { recompinput::GameInput::X_AXIS_POS, "Wheel Right" },
+            { recompinput::GameInput::Y_AXIS_POS, "Gas" },
+            { recompinput::GameInput::Y_AXIS_NEG, "Brake" },
+            { recompinput::GameInput::R, "Shift Up" },
+            { recompinput::GameInput::L, "Shift Down" },
+            { recompinput::GameInput::C_UP, "Camera" },
+            { recompinput::GameInput::C_RIGHT, "Horn" },
+            { recompinput::GameInput::A, "Mirror" },
+            { recompinput::GameInput::B, "Hand Brake" },
+            { recompinput::GameInput::Z, "Abort" },
+            { recompinput::GameInput::START, "Pause / Start" },
+        };
+        for (const auto &action : actions) {
+            if (!recompinput::get_game_input_disabled(action.input)) {
+                game_input_sections.n64.contexts.push_back({
+                    action.name, recompinput::get_game_input_description(action.input),
+                    action.input, recompinput::get_game_input_clearable(action.input)
+                });
+            }
+        }
+    }
+
     for (int i = 0; i < static_cast<int>(recompinput::GameInput::COUNT); i++) {
         recompinput::GameInput input = static_cast<recompinput::GameInput>(i);
         if (recompinput::get_game_input_disabled(input)) {
@@ -211,7 +244,7 @@ void ConfigPageControls::create_game_input_contexts() {
 
         if (recompinput::get_game_input_is_menu(input)) {
             game_input_sections.menu.contexts.push_back(input_ctx);
-        } else {
+        } else if (!wheel_profile) {
             game_input_sections.n64.contexts.push_back(input_ctx);
         }
     }
@@ -535,8 +568,8 @@ void ConfigPageControls::render_control_mappings() {
 
         game_input_rows.clear();
 
-        create_game_input_contexts();
         set_current_profile_index();
+        create_game_input_contexts();
 
         rows_wrappers.clear();
         for (auto *section : game_input_sections.get_all_sections()) {
