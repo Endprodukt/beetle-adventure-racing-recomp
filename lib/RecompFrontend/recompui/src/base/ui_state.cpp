@@ -626,7 +626,8 @@ int cont_axis_to_key(SDL_ControllerAxisEvent& axis, float value) {
 // Wheel devices are raw SDL joysticks, so their buttons never enter the SDL
 // GameController menu mapping above. Use the selected wheel profile's menu
 // bindings, including keyboard bindings stored alongside the raw inputs.
-int wheel_menu_event_to_key(const SDL_Event& event) {
+int wheel_menu_event_to_key(const SDL_Event& event, bool& hat_assigned) {
+    hat_assigned = false;
     if (!recompinput::profiles::is_wheel_selected(0)) return 0;
     const int profile = recompinput::profiles::get_input_profile_for_player(0, recompinput::InputDevice::Controller);
     if (profile != recompinput::profiles::get_wheel_profile_index()) return 0;
@@ -642,7 +643,11 @@ int wheel_menu_event_to_key(const SDL_Event& event) {
                 if (event.type == SDL_KEYUP) value = std::max(value, 0.0f);
                 else if (!event.key.repeat) value = 1.0f;
             } else {
-                value = std::max(value, recompinput::wheel_event_binding_value(event, binding));
+                const float binding_value = recompinput::wheel_event_binding_value(event, binding);
+                if (binding.input_type == recompinput::InputType::JoystickHat && binding_value >= 0.5f) {
+                    hat_assigned = true;
+                }
+                value = std::max(value, binding_value);
             }
         }
         if (value < 0.0f) continue;
@@ -719,13 +724,16 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
     constexpr clock::duration repeat_rate = std::chrono::milliseconds{50};
     static clock::time_point next_repeat_time = {};
     static int latest_controller_key_pressed = SDLK_UNKNOWN;
+    static clock::time_point next_hat_repeat_time = {};
+    static int latest_hat_key_pressed = SDLK_UNKNOWN;
 
     bool all_input_is_disabled = recompinput::all_input_disabled();
 
     while (recompui::try_deque_event(cur_event)) {
         bool context_capturing_input = recompui::is_context_capturing_input();
         bool context_capturing_mouse = recompui::is_context_capturing_mouse();
-        const int wheel_menu_key = wheel_menu_event_to_key(cur_event);
+        bool hat_assigned = false;
+        const int wheel_menu_key = wheel_menu_event_to_key(cur_event, hat_assigned);
 
         // Handle up button events even when input is disabled to avoid missing them during binding.
         if (cur_event.type == SDL_EventType::SDL_CONTROLLERBUTTONUP) {
@@ -784,8 +792,31 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 cont_interacted = true;
                 break;
             }
-            case SDL_EventType::SDL_JOYBUTTONDOWN:
             case SDL_EventType::SDL_JOYHATMOTION:
+                if (recompinput::profiles::is_wheel_selected(0) &&
+                    recompinput::is_raw_joystick_hat_event(cur_event)) {
+                    int hat_key = SDLK_UNKNOWN;
+                    if (!hat_assigned) {
+                        const Uint8 direction = cur_event.jhat.value;
+                        if (direction & SDL_HAT_UP) hat_key = SDLK_UP;
+                        else if (direction & SDL_HAT_DOWN) hat_key = SDLK_DOWN;
+                        else if (direction & SDL_HAT_LEFT) hat_key = SDLK_LEFT;
+                        else if (direction & SDL_HAT_RIGHT) hat_key = SDLK_RIGHT;
+                    }
+                    if (hat_key != latest_hat_key_pressed) {
+                        latest_hat_key_pressed = hat_key;
+                        if (context_capturing_input && hat_key != SDLK_UNKNOWN) {
+                            ui_state->context->ProcessKeyDown(convert_sdl_to_rml(hat_key), 0);
+                            next_hat_repeat_time = clock::now() + start_repeat_delay;
+                        }
+                    }
+                    if (hat_key != SDLK_UNKNOWN || wheel_menu_key) {
+                        non_mouse_interacted = true;
+                        cont_interacted = true;
+                    }
+                }
+                break;
+            case SDL_EventType::SDL_JOYBUTTONDOWN:
             case SDL_EventType::SDL_JOYAXISMOTION:
                 if (wheel_menu_key) {
                     non_mouse_interacted = true;
@@ -902,6 +933,14 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
         if (now >= next_repeat_time) {
             ui_state->context->ProcessKeyDown(convert_sdl_to_rml(latest_controller_key_pressed), 0);
             next_repeat_time += repeat_rate;
+        }
+    }
+    if (latest_hat_key_pressed != SDLK_UNKNOWN && recompui::is_context_capturing_input() &&
+        recompinput::profiles::is_wheel_selected(0)) {
+        clock::time_point now = clock::now();
+        if (now >= next_hat_repeat_time) {
+            ui_state->context->ProcessKeyDown(convert_sdl_to_rml(latest_hat_key_pressed), 0);
+            next_hat_repeat_time += repeat_rate;
         }
     }
 
