@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <atomic>
-#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <string>
@@ -434,20 +433,10 @@ namespace recompinput {
             int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
             check_buttons(profile_index_cont);
-            if (profile_index_cont == wheel_profile_index) {
-                static const bool trace = std::getenv("BAR_WHEEL_INPUT_TRACE") != nullptr;
-                if (trace && player_index == 0) {
-                    static bool last_brake = false;
-                    static bool last_driving = false;
-                    const bool brake = (cur_buttons & 0x4000) != 0;
-                    const bool driving = wheel_driving_state.load(std::memory_order_relaxed);
-                    if (brake != last_brake || (brake && driving != last_driving)) {
-                        std::fprintf(stderr, "[wheel-input] Hand Brake B=%d driving=%d\n", brake, driving);
-                        last_brake = brake;
-                        last_driving = driving;
-                    }
-                }
-            }
+            const bool wheel_brake = profile_index_cont == wheel_profile_index &&
+                recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::B]);
+            const bool wheel_menu_back = profile_index_cont == wheel_profile_index &&
+                recompinput::get_input_digital(player_index, input_profiles[wheel_profile_index].mappings[(size_t)GameInput::GAME_MENU_BACK]);
             if (profile_index_cont == wheel_profile_index && !wheel_driving_state.load(std::memory_order_relaxed)) {
                 const input_mapping_array &mappings = input_profiles[wheel_profile_index].mappings;
                 auto game_menu_button = [&](GameInput virtual_input, uint16_t n64_bit) {
@@ -461,6 +450,19 @@ namespace recompinput {
                 game_menu_button(GameInput::GAME_MENU_CONFIRM, 0x8000); // N64 A
                 game_menu_button(GameInput::GAME_MENU_BACK, 0x4000);    // N64 B
                 game_menu_button(GameInput::GAME_MENU_START, 0x1000);   // N64 Start
+            }
+            if (profile_index_cont == wheel_profile_index && player_index == 0) {
+                // One line per press/release, without requiring a launch environment variable.
+                // These three values locate a dead Hand Brake: physical binding, race/menu
+                // classification, or the final B bit sent to the game.
+                static bool last_brake = false, last_back = false;
+                if (wheel_brake != last_brake || wheel_menu_back != last_back) {
+                    std::fprintf(stderr, "[wheel-brake] binding=%d menu_back=%d driving=%d B_out=%d\n",
+                                 wheel_brake, wheel_menu_back,
+                                 wheel_driving_state.load(std::memory_order_relaxed), (cur_buttons & 0x4000) != 0);
+                    last_brake = wheel_brake;
+                    last_back = wheel_menu_back;
+                }
             }
             check_buttons(profile_index_kb);
 
