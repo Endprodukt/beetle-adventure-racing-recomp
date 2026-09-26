@@ -376,8 +376,9 @@ hardware force feedback behavior still requires measurement on an actual wheel.
 
 The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
 are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
-Hand Brake, Z is Abort, and Start is Pause / Start. Other N64 inputs are omitted from this
-editor. Recomp menu inputs remain visible separately.
+Hand Brake, Z is Abort, and Start is Pause / Start. The four N64 D-pad directions are
+shown as Game Menu Up/Down/Left/Right for an assignable wheel hat. Other N64 inputs are
+omitted from this editor. Recomp menu inputs remain visible separately.
 Stored input IDs and the controller editor do not change.
 Raw joystick binding slots use a smaller text font and a shortened device name to fit two
 bindings in each row; the full device name remains in the binding data and the slot title.
@@ -386,11 +387,12 @@ Escape cancels the scan. The runtime's input readers already evaluate keyboard f
 controller profiles, so a wheel action can be bound to a key in either slot.
 
 The Wheel profile now sends only its directly bound N64 buttons and analog stick. There is
-no driving/menu classification and no separate Game Menu Confirm/Back/Start or Wheel D-pad
-rows. A/B/Start therefore keep the same N64 bits in both contexts; this also means those
+no driving/menu classification and no separate Game Menu Confirm/Back/Start inputs.
+The four D-pad rows map straight to the N64 D-pad without a state check. A/B/Start
+therefore keep the same N64 bits in both contexts; this also means those
 driving actions and their in-game menu functions cannot have separate physical bindings.
 Older `controls.json` entries for the removed virtual menu actions are ignored on load and
-omitted on save. Old Wheel C-Left/C-Down and D-pad entries, hidden from its editor, are
+omitted on save. Old Wheel C-Left/C-Down entries, hidden from its editor, are
 ignored at runtime so they cannot silently generate extra N64 actions. The Recomp menu's
 own input settings are independent and remain available.
 The ordinary keyboard profile is still merged for standard gamepad profiles, but not for
