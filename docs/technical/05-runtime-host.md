@@ -405,6 +405,14 @@ HUD game-state logic remains separate from this input path. `[wheel-button]` log
 button-down events with the one-based editor button number and the zero-based SDL ID,
 and `[wheel-key]` logs keydown scancodes to `<app config>/wheel-input.log`.
 
+The game's own Options → Controller layout is separate from this host-side Wheel profile.
+For the report that a saved in-game Wheel layout works only after cycling the in-game option,
+`BAR_DBG_LAYOUT=1` logs changes to four bytes at the decomp symbol
+`gOptionsControllerLayoutMenu` (`0x8002CD40`) and sixteen bytes at `gControllerLayout`
+(`0x8002D064`), along with `currentGameState`. These are observation ranges, not confirmed
+field sizes. Compare the trace after loading the save and after switching away and back;
+do not force a layout value until that transition is measured.
+
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
 Two consequences, both measured in `controls.json` and in play with pad = player one, keyboard =
