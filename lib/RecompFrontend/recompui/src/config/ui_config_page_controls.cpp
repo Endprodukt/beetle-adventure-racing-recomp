@@ -218,6 +218,10 @@ void ConfigPageControls::create_game_input_contexts() {
             { recompinput::GameInput::B, "Hand Brake" },
             { recompinput::GameInput::Z, "Abort" },
             { recompinput::GameInput::START, "Pause / Start" },
+            { recompinput::GameInput::DPAD_UP, "Game Menu Up" },
+            { recompinput::GameInput::DPAD_DOWN, "Game Menu Down" },
+            { recompinput::GameInput::DPAD_LEFT, "Game Menu Left" },
+            { recompinput::GameInput::DPAD_RIGHT, "Game Menu Right" },
         };
         for (const auto &action : actions) {
             if (!recompinput::get_game_input_disabled(action.input)) {
