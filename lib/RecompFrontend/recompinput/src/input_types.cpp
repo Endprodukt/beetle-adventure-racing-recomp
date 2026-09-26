@@ -23,9 +23,6 @@ constexpr std::array<std::string, num_game_inputs> get_default_game_input_descri
     descriptions[static_cast<size_t>(GameInput::APPLY_MENU)] = "In the recomp interface, if changes are made to a configuration that requires applying your settings, this will apply the current changes.";
     descriptions[static_cast<size_t>(GameInput::TAB_LEFT_MENU)] = "In the recomp interface, switches the active tab to the one on the left of the current tab.";
     descriptions[static_cast<size_t>(GameInput::TAB_RIGHT_MENU)] = "In the recomp interface, switches the active tab to the one on the right of the current tab.";
-    descriptions[static_cast<size_t>(GameInput::GAME_MENU_CONFIRM)] = "Presses A in the game's menus. In a race, Mirror has its own binding.";
-    descriptions[static_cast<size_t>(GameInput::GAME_MENU_BACK)] = "Presses B in the game's menus. In a race, Hand Brake has its own binding.";
-    descriptions[static_cast<size_t>(GameInput::GAME_MENU_START)] = "Presses Start outside an active race. Pause / Start has its own driving binding.";
 #undef DEFINE_INPUT
     return descriptions;
 }
