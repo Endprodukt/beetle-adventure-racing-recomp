@@ -326,6 +326,16 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         }
         break;
     case SDL_EventType::SDL_JOYBUTTONDOWN:
+        if (profiles::is_wheel_selected(0) && !binding::is_binding()) {
+            // Temporary field diagnostic: the binding trace in profiles.cpp then shows
+            // whether this physical press became N64 B. Limit menu noise per launch.
+            static int wheel_button_logs = 0;
+            if (wheel_button_logs++ < 100) {
+                SDL_Joystick* source = SDL_JoystickFromInstanceID(event->jbutton.which);
+                std::fprintf(stderr, "[wheel-button] %s button %u\n",
+                             source ? SDL_JoystickName(source) : "disconnected", event->jbutton.button);
+            }
+        }
         if (binding::is_wheel_being_bound()) {
             binding::set_scanned_input(wheel_input(event->jbutton.which, InputType::JoystickButton, event->jbutton.button));
         } else {
