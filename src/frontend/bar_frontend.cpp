@@ -412,7 +412,9 @@ void refresh_players() {
     // appears closes that gap.
     std::vector<int> pad_profiles;
     for (SDL_GameController* pad : connected) {
-        pad_profiles.push_back(recompinput::profiles::get_controller_profile_index_from_sdl_controller(pad));
+        // SDL's initial device-added event can be consumed before RecompFrontend
+        // starts pumping events. Create the pad's default profile from enumeration.
+        pad_profiles.push_back(recompinput::ensure_controller_profile(pad));
     }
     static bool assigned_once = false;
     static std::vector<SDL_GameController*> assigned;
