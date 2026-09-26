@@ -21,6 +21,29 @@ void queue_if_enabled(SDL_Event* event) {
 static std::unordered_map<uint64_t, ControllerGUID> deferred_controller_profiles;
 static std::unordered_map<SDL_JoystickID, SDL_Joystick*> open_wheel_devices;
 
+static void open_unmapped_joysticks() {
+    // The initial JOYDEVICEADDED events can be consumed during early SDL/renderer setup.
+    // Enumeration remains available, so open every currently connected raw device here too.
+    for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+        if (SDL_IsGameController(i)) continue;
+        const SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(i);
+        if (id < 0 || open_wheel_devices.contains(id)) continue;
+        if (SDL_Joystick* joystick = SDL_JoystickOpen(i)) {
+            open_wheel_devices.emplace(id, joystick);
+            std::fprintf(stderr, "[recompinput] raw joystick opened: %s (instance %d)\n",
+                         SDL_JoystickName(joystick), id);
+        }
+    }
+    for (auto it = open_wheel_devices.begin(); it != open_wheel_devices.end();) {
+        if (SDL_JoystickGetAttached(it->second)) {
+            ++it;
+        } else {
+            SDL_JoystickClose(it->second);
+            it = open_wheel_devices.erase(it);
+        }
+    }
+}
+
 static InputField wheel_input(SDL_JoystickID id, InputType type, int input_id) {
     InputField field{type, input_id};
     SDL_Joystick* joystick = SDL_JoystickFromInstanceID(id);
@@ -120,13 +143,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     }
     break;
     case SDL_EventType::SDL_JOYDEVICEADDED:
-        // SDL_GameControllerOpen opens mapped joysticks. Open the unmapped wheel/pedal/shifter
-        // devices too, so they produce JOYAXIS, JOYBUTTON and JOYHAT events.
-        if (!SDL_IsGameController(event->jdevice.which)) {
-            if (SDL_Joystick* joystick = SDL_JoystickOpen(event->jdevice.which)) {
-                open_wheel_devices[SDL_JoystickInstanceID(joystick)] = joystick;
-            }
-        }
+        open_unmapped_joysticks();
         break;
     case SDL_EventType::SDL_JOYDEVICEREMOVED:
         if (auto it = open_wheel_devices.find(event->jdevice.which); it != open_wheel_devices.end()) {
@@ -302,6 +319,7 @@ void handle_events() {
     SDL_Event cur_event;
     static bool started = false;
     static bool exited = false;
+    open_unmapped_joysticks();
     while (SDL_PollEvent(&cur_event) && !exited) {
         exited = sdl_event_filter(nullptr, &cur_event);
 
