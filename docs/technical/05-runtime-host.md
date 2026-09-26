@@ -338,7 +338,11 @@ cannot be distinguished; moving a serial-less device to a different USB path may
 rebinding. The window thread samples all open joystick buttons, hats and axes once per input
 poll and publishes an immutable snapshot. The game's SI thread reads that snapshot while polling
 the profile, so it never holds an SDL joystick pointer that the event thread could close on
-disconnect. This path handles input only; it does not implement force feedback.
+disconnect. At each event-pump pass, unmapped devices are also opened by enumeration: an early
+`JOYDEVICEADDED` event is not a reliable prerequisite after SDL has already initialized. The
+`[recompinput] raw joystick opened` line confirms that a wheel/pedal/shifter can produce raw
+button and axis events for assignment. This path handles input only; it does not implement force
+feedback.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
