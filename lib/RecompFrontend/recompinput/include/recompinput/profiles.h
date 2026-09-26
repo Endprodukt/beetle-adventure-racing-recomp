@@ -66,6 +66,10 @@ namespace recompinput {
         std::string get_string_from_controller_guid(ControllerGUID guid);
         bool get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out);
         void set_wheel_driving_state(bool driving);
+        int get_wheel_center_strength();
+        int get_wheel_rumble_strength();
+        void set_wheel_center_strength(int percent);
+        void set_wheel_rumble_strength(int percent);
 
         bool load_controls_config(const std::filesystem::path& path);
         bool save_controls_config(const std::filesystem::path& path);
