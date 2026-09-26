@@ -344,6 +344,13 @@ disconnect. At each event-pump pass, unmapped devices are also opened by enumera
 button and axis events for assignment. This path handles input only; it does not implement force
 feedback.
 
+The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
+are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
+Hand Brake, Z is Abort, and Start is Pause / Start. Other N64 inputs are omitted from this
+editor; menu inputs remain visible. Stored input IDs and the controller editor do not change.
+Raw joystick binding slots use a smaller text font and a shortened device name to fit two
+bindings in each row; the full device name remains in the binding data and the slot title.
+
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
 Two consequences, both measured in `controls.json` and in play with pad = player one, keyboard =
