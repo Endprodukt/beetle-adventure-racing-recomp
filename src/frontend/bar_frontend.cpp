@@ -450,9 +450,9 @@ void bar::frontend::pump_events() {
 
     refresh_players();
 
-    // Rumble. BAR pulses its motor to set the strength, so the port models the motor
-    // (src/main/bar_rumble.cpp) and sends each player's pad the resulting level, scaled by the General
-    // tab's Rumble Strength, on both of its motors. recompinput::update_rumble is not called on that
+    // Rumble. BAR pulses its motor to set the strength, so the port models the unscaled motor
+    // (src/main/bar_rumble.cpp). The Wheel and the gamepads then apply their own independent sliders.
+    // recompinput::update_rumble is not called on that
     // path: it samples an on/off flag once per frame, which missed the pulses, and it would write its
     // own strength over this one. BAR_RUMBLE_RAW=1 goes back to it (A/B).
     if (bar::rumble::raw_mode()) {
@@ -461,15 +461,27 @@ void bar::frontend::pump_events() {
     } else {
         uint16_t strength[bar::rumble::kPorts];
         bool send[bar::rumble::kPorts];
-        bar::rumble::step(recompui::config::general::get_rumble_strength(), bar_output_silenced(), strength, send);
-        // The Wheel profile selects its own haptic device from the bound steering axis.
+        bar::rumble::step(100.0, bar_output_silenced(), strength, send);
+        const bool wheel_player_one = recompinput::profiles::is_wheel_selected(0);
+        static SDL_GameController* muted_player_one_pad = nullptr;
+        SDL_GameController* player_one_pad = recompinput::players::get_player(0).controller;
+        if (wheel_player_one && player_one_pad != nullptr && player_one_pad != muted_player_one_pad) {
+            // Stop any vibration left over from the Controller profile immediately.
+            SDL_GameControllerRumble(player_one_pad, 0, 0, 0);
+        }
+        muted_player_one_pad = wheel_player_one ? player_one_pad : nullptr;
+        // Stop the SDL gamepad effect before updating wheel haptics in case a
+        // wheel also exposes an SDL_GameController handle for this same device.
         recompinput::update_wheel_force_feedback(strength[0], send[0]);
+        const double pad_scale = std::clamp(recompui::config::general::get_rumble_strength(), 0.0, 100.0) / 100.0;
         for (int port = 0; port < bar::rumble::kPorts && port < kMaxPlayers; port++) {
+            if (port == 0 && wheel_player_one) continue;
             if (!send[port] || !recompinput::players::get_player_is_assigned(port)) continue;
             SDL_GameController* pad = recompinput::players::get_player(port).controller;
             if (pad != nullptr) {
-                SDL_GameControllerRumble(pad, strength[port], strength[port],
-                                         strength[port] != 0 ? bar::rumble::kSendDurationMs : 0);
+                const uint16_t pad_strength = static_cast<uint16_t>(std::lround(strength[port] * pad_scale));
+                SDL_GameControllerRumble(pad, pad_strength, pad_strength,
+                                         pad_strength != 0 ? bar::rumble::kSendDurationMs : 0);
             }
         }
     }
@@ -493,7 +505,7 @@ void bar::frontend::set_port_rumble(int port, bool on) {
     if (port < 0 || port >= kMaxPlayers) {
         return;
     }
-    recompinput::set_rumble(port, on);
+    recompinput::set_rumble(port, port == 0 && recompinput::profiles::is_wheel_selected(0) ? false : on);
 }
 
 uint16_t bar::frontend::poll_port(int port, int8_t* stick_x, int8_t* stick_y) {

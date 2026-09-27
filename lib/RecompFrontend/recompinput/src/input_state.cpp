@@ -8,6 +8,7 @@
 #include "recompinput/input_state.h"
 #include "recompinput/input_binding.h"
 #include "recompinput/players.h"
+#include "recompinput/profiles.h"
 #include "recompui/config.h"
 
 using namespace recompinput;
@@ -143,6 +144,19 @@ void recompinput::update_rumble() {
         rumbles_to_run = InputState.cur_rumble.size();
     }
     for (size_t i = 0; i < rumbles_to_run; i++) {
+        if (profiles::is_wheel_selected(static_cast<int>(i))) {
+            // The raw rumble comparison path must not buzz a gamepad while this
+            // player uses Wheel. Clear a previous Controller effect immediately.
+            InputState.cur_rumble[i] = 0.0f;
+            std::lock_guard lock{ InputState.controllers_mutex };
+            if (recompinput::players::is_single_player_mode()) {
+                for (const auto& controller : InputState.detected_controllers)
+                    do_rumble(controller, 0, 0);
+            } else if (auto& player = recompinput::players::get_player(i); player.controller != nullptr) {
+                do_rumble(player.controller, 0, 0);
+            }
+            continue;
+        }
         // Note: values are not accurate! just approximations based on feel
         if (InputState.rumble_active[i]) {
             InputState.cur_rumble[i] += 0.17f;

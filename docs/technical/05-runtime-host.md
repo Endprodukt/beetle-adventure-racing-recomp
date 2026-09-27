@@ -368,9 +368,9 @@ Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_Ha
 tries a position-dependent spring condition on SDL's steering axis, falling back to autocenter
 if that effect cannot start. It initializes simple rumble only when supported and logs failed
 spring/rumble operations instead of trusting a capability flag. BAR's
-existing pulse-density motor model supplies the rumble magnitude after the General Rumble Strength
-setting; the wheel output applies a capped `1.5 × level^0.4` curve to lift faint pulses, then
-applies the Wheel editor's Game Rumble percentage. Both the Center
+existing pulse-density motor model supplies the unscaled rumble magnitude. The wheel output applies
+a capped `2.0 × level^0.4` curve to lift faint pulses, then applies only the Wheel editor's Game
+Rumble percentage. General Rumble Strength applies only to gamepads. Both the Center
 Spring and Game Rumble percentages live in `controls.json` under `wheel_ffb`, defaulting to 20%
 and 50% respectively; zero disables its effect. Unsupported effects are reported once in the
 `[wheel-ffb]` log and do not affect the input bindings. The haptic device is never selected by a
@@ -581,10 +581,13 @@ Body Harvest's model with its constants unchanged, one instance per port. Every 
 from the joybus motor register or from ultramodern's `set_rumble` callback, goes through
 `bar_pak_motor` (`main.cpp`) into `bar::rumble::motor`. Once per frame, `pump_events()` works out
 each port's on-fraction since the last frame (the duty), low-passes it (40 ms up, 80 ms down),
-multiplies by General → Rumble Strength, and sends the result to both motors of that player's own pad
+multiplies by General → Rumble Strength for gamepads, and sends the result to both motors of that player's own pad
 (`recompinput::players::get_player(port).controller`). Values below `0x0400` become 0. A new value is
 sent when it changes by `0x0800` or more, and a held level is re-sent every 100 ms with a 250 ms
 duration. With Mute When Not In Focus on, alt-tabbing away stops the motor too.
+When player one selects the Wheel profile, its assigned gamepad gets no rumble; a previously
+active pad effect is stopped. The Wheel haptic device receives the unscaled motor level through
+its own Game Rumble slider. Other players' gamepads keep their General strength setting.
 `recompinput::update_rumble` is no longer called.
 
 Measured (`BAR_RUMBLE_TRACE=1`, `build-cmake`, where the model runs for the trace only, in the same

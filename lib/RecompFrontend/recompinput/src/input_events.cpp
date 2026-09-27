@@ -190,7 +190,7 @@ void update_wheel_force_feedback(uint16_t game_rumble, bool rumble_changed) {
         // A wheel's force motor responds poorly to the tiny duty-cycle levels
         // of an N64 Rumble Pak. Preserve zero and full scale, lift the quiet hits.
         const float level = game_rumble / 65535.0f;
-        const float strength = std::min(1.0f, 1.5f * std::pow(level, 0.4f)) *
+        const float strength = std::min(1.0f, 2.0f * std::pow(level, 0.4f)) *
                                (profiles::get_wheel_rumble_strength() / 100.0f);
         if (strength > 0.0f) {
             if (SDL_HapticRumblePlay(wheel_ffb.handle, strength, 250) != 0) {
