@@ -38,6 +38,7 @@ static int keyboard_sp_profile_index = -1;
 static int controller_sp_profile_index = -1;
 static int wheel_profile_index = -1;
 static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
+static std::atomic_bool force_wheel_button_preset{false};
 static std::atomic_bool wheel_driving_state{false};
 static std::atomic_int wheel_center_strength{20};
 static std::atomic_int wheel_rumble_strength{50};
@@ -382,6 +383,14 @@ namespace recompinput {
         }
     }
 
+    bool profiles::get_force_wheel_button_preset() {
+        return force_wheel_button_preset.load(std::memory_order_relaxed);
+    }
+
+    void profiles::set_force_wheel_button_preset(bool force) {
+        force_wheel_button_preset.store(force, std::memory_order_relaxed);
+    }
+
     int profiles::get_sp_keyboard_profile_index() {
         return keyboard_sp_profile_index;
     }
@@ -503,6 +512,7 @@ namespace recompinput {
         config_json["profiles"] = std::vector<json>(profile_count);
         config_json["controllers"] = std::vector<json>(controller_count);
         config_json["wheel_players"] = wheel_selected;
+        config_json["force_wheel_button_preset"] = get_force_wheel_button_preset();
         config_json["wheel_ffb"] = { {"center_spring", get_wheel_center_strength()},
                                       {"game_rumble", get_wheel_rumble_strength()} };
 
@@ -607,6 +617,12 @@ namespace recompinput {
 
         auto version_it = config_json.find("version");
         if (version_it != config_json.end()) {
+            // Deliberately ignore the old force_wheel_game_layout key: that
+            // implementation crashed and must never auto-enable on upgrade.
+            if (auto force = config_json.find("force_wheel_button_preset");
+                force != config_json.end() && force->is_boolean()) {
+                set_force_wheel_button_preset(force->get<bool>());
+            }
             if (auto ffb = config_json.find("wheel_ffb"); ffb != config_json.end() && ffb->is_object()) {
                 if (auto v = ffb->find("center_spring"); v != ffb->end() && v->is_number_integer())
                     set_wheel_center_strength(v->get<int>());

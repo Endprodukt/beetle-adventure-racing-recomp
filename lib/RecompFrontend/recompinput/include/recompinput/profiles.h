@@ -61,6 +61,8 @@ namespace recompinput {
         int get_wheel_profile_index();
         bool is_wheel_selected(int player_index);
         void set_wheel_selected(int player_index, bool selected);
+        bool get_force_wheel_button_preset();
+        void set_force_wheel_button_preset(bool force);
         void set_wheel_driving_state(bool driving);
         int get_sp_keyboard_profile_index();
         int get_or_create_mp_keyboard_profile_index(int player_index);

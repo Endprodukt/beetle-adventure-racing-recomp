@@ -23,6 +23,7 @@
 #include <cstring>  // BAR_BURST_ON_ROLL: memcpy/strchr/strcmp for the burst-capture spec parse
 #include <fstream>  // BAR_DBG_LAYOUT: log a GUI-subsystem build without a console
 #include <librecomp/game.hpp>
+#include <librecomp/overlays.hpp>
 
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
@@ -31,6 +32,7 @@
 #endif
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "frontend/bar_frontend.h"
+#include "recompinput/profiles.h"
 #endif
 
 // Per-port input resolution lives in main.cpp / bar_input (they own the Win32 window / focus + SDL).
@@ -329,32 +331,53 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
     // controller poll (per frame) in both the menus and a race, the right cadence for the
     // "every frame" cheat writes (unlocks, debug-options flags). No-op when nothing is enabled.
     bar_cheats::apply_frame(rdram);
-    // A Controller Pak save can restore the Wheel layout (2) without applying its button
-    // preset. The Options screen normally calls func_selection_0040D844(2), which copies
-    // 36 bytes into the active controller table at 0x8002CCB0. Run that same game routine
-    // once when the restored selection first appears in the selection menu. Use a separate
-    // context so the SI callback's registers are untouched; get_function also ensures the
-    // selection overlay is loaded before we invoke its routine.
-    { static bool applied_in_selection = false;
+    // The game routine copies one of the selection overlay's 36-byte button presets
+    // into Player 1's active table; it does not set any controller-layout globals.
+    // Use it for a restored Wheel save or for the explicit host-side Wheel override.
+    // Never write the game's layout selectors: their field sizes/init order are unverified.
+    {
       constexpr int64_t game_state_addr = (int64_t)(int32_t)0x80025CF0;
       constexpr int64_t menu_layout_addr = (int64_t)(int32_t)0x8002CD40;
       constexpr int64_t active_layout_addr = (int64_t)(int32_t)0x8002D064;
       const int state = (int)MEM_W(0xA4, game_state_addr);
-      if (state != 14) {
-          applied_in_selection = false;
-      } else if (!applied_in_selection && MEM_W(0, menu_layout_addr) == 2 &&
-                 MEM_BU(0, active_layout_addr) == 2 && section_addresses != nullptr) {
-          const int32_t apply_addr = section_addresses[167] + 0xD844;
-          if (recomp_func_t* apply = get_function(apply_addr)) {
-              const int64_t selection_player = (int64_t)section_addresses[167] + 0x20DF0;
-              if (MEM_H(0, selection_player) == 0) {
-                  recomp_context apply_ctx = *ctx;
-                  apply_ctx.r4 = 2;
-                  apply(rdram, &apply_ctx);
-                  applied_in_selection = true;
+#ifdef BEETLE_ENABLE_FRONTEND
+      const bool force_wheel = recompinput::profiles::is_wheel_selected(0) &&
+                               recompinput::profiles::get_force_wheel_button_preset();
+#else
+      const bool force_wheel = false;
+#endif
+      if (state == 14 && section_addresses != nullptr &&
+          (force_wheel || (MEM_W(0, menu_layout_addr) == 2 && MEM_BU(0, active_layout_addr) == 2))) {
+          // A menu state can be visible before the selection overlay is loaded.
+          // get_function() asserts and exits for a missing address, so check the
+          // loaded section and its ownership before reading overlay data.
+          if (recomp_func_t* apply = recomp::overlays::get_loaded_func_by_section_index_offset(167, 0xD844)) {
+              const uint32_t selection_base = (uint32_t)section_addresses[167];
+              if (selection_base >= 0x80000000u &&
+                  selection_base <= 0x80800000u - (0x21670u + 3u * 0x24u)) {
+                  const int64_t selection_player = (int64_t)(int32_t)selection_base + 0x20DF0;
+                  if (MEM_H(0, selection_player) == 0) {
+                      // func_selection_0040D844 copies the overlay's Wheel preset to Player 1.
+                      // Wait until its data is populated, then reapply if the game overwrites it.
+                      const int64_t source = (int64_t)(int32_t)selection_base + 0x21670 + 2 * 0x24;
+                      const int64_t active = game_state_addr + 0x6FC0;
+                      bool source_ready = false;
+                      bool differs = false;
+                      for (int word = 0; word < 9; ++word) {
+                          const uint32_t preset = MEM_W(word * 4, source);
+                          source_ready |= preset != 0;
+                          differs |= preset != MEM_W(word * 4, active);
+                      }
+                      if (source_ready && differs) {
+                          recomp_context apply_ctx = *ctx;
+                          apply_ctx.r4 = 2;
+                          apply(rdram, &apply_ctx);
+                      }
+                  }
               }
           }
-      } }
+      }
+    }
     // Diagnose a saved in-game Wheel layout that is displayed as selected but only starts
     // working after cycling the game's Options -> Controller setting. These are two distinct
     // game globals, independent of RecompFrontend's wheel_players in controls.json. Capture
