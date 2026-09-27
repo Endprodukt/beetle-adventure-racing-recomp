@@ -410,24 +410,6 @@ void ConfigPageControls::render_body_mappings() {
         description_container->set_text("");
 
         if (selected_profile_index == recompinput::profiles::get_wheel_profile_index()) {
-            auto force_layout_row = context.create_element<Element>(body->get_right(), 0, "div", false);
-            force_layout_row->set_display(Display::Flex);
-            force_layout_row->set_align_items(AlignItems::Center);
-            force_layout_row->set_gap(12.0f);
-            force_layout_row->set_margin_top(24.0f);
-            auto force_layout_toggle = context.create_element<Toggle>(force_layout_row, ToggleSize::Medium);
-            force_layout_toggle->set_checked(recompinput::profiles::get_force_wheel_game_layout());
-            force_layout_toggle->add_checked_callback([](bool checked) {
-                recompinput::profiles::set_force_wheel_game_layout(checked);
-                recompinput::profiles::save_controls_config(
-                    recomp::get_config_path() / (config::controls::id + ".json"));
-            });
-            context.create_element<Label>(force_layout_row, "Force Wheel mode in game", theme::Typography::LabelMD);
-            auto layout_hint = context.create_element<Label>(body->get_right(),
-                "Use the game's Wheel controller layout for Player 1, even without a Controller Pak save.",
-                theme::Typography::LabelSM);
-            layout_hint->set_margin_top(8.0f);
-
             auto add_ffb_slider = [&](const char* label, int value, void (*set_value)(int)) {
                 auto heading = context.create_element<Label>(body->get_right(), label, theme::Typography::LabelMD);
                 heading->set_margin_top(24.0f);
