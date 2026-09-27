@@ -424,7 +424,7 @@ void ConfigPageControls::render_body_mappings() {
             });
             context.create_element<Label>(force_layout_row, "Force Wheel button layout in game", theme::Typography::LabelMD);
             auto layout_hint = context.create_element<Label>(body->get_right(),
-                "Apply the game's Wheel button preset for Player 1, even without a Controller Pak save.",
+                "Select Wheel in the game's controller layout and apply its button preset, even without a Controller Pak save.",
                 theme::Typography::LabelSM);
             layout_hint->set_margin_top(8.0f);
 

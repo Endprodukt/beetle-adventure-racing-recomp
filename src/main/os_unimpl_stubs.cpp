@@ -28,6 +28,9 @@
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
 #include "main/bar_watchdog.h" // all-thread report if the race stops polling controllers
+#ifdef _WIN32
+extern "C" void bar_crash_note_game_state(int state);
+#endif
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "recompinput/profiles.h"
 #endif
@@ -335,7 +338,6 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
     // The game routine copies one of the selection overlay's 36-byte button presets
     // into Player 1's active table; it does not set any controller-layout globals.
     // Use it for a restored Wheel save or for the explicit host-side Wheel override.
-    // Never write the game's layout selectors: their field sizes/init order are unverified.
     {
       constexpr int64_t game_state_addr = (int64_t)(int32_t)0x80025CF0;
       constexpr int64_t menu_layout_addr = (int64_t)(int32_t)0x8002CD40;
@@ -343,7 +345,7 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
       const int state = (int)MEM_W(0xA4, game_state_addr);
       bar::watchdog::game_heartbeat(state);
 #ifdef _WIN32
-      { extern void bar_crash_note_game_state(int); bar_crash_note_game_state(state); }
+      bar_crash_note_game_state(state);
 #endif
 #ifdef BEETLE_ENABLE_FRONTEND
       const bool force_wheel = recompinput::profiles::is_wheel_selected(0) &&
@@ -373,6 +375,13 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
                           source_ready |= preset != 0;
                           differs |= preset != MEM_W(word * 4, active);
                       }
+                      if (source_ready && force_wheel) {
+                          // Copying the button table alone leaves Options on Standard and
+                          // does not enable pedal input. Update the observed menu word and
+                          // active layout byte only after the selection overlay is ready.
+                          if (MEM_W(0, menu_layout_addr) != 2) MEM_W(0, menu_layout_addr) = 2;
+                          if (MEM_BU(0, active_layout_addr) != 2) MEM_B(0, active_layout_addr) = 2;
+                      }
                       if (source_ready && differs) {
                           recomp_context apply_ctx = *ctx;
                           apply_ctx.r4 = 2;
@@ -381,6 +390,12 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
                   }
               }
           }
+      }
+      // Race initialization may restore the saved Standard selector after leaving
+      // the menu. Keep the active layout on Wheel while the override is enabled.
+      if (state == 5 && force_wheel && MEM_W(0, menu_layout_addr) == 2 &&
+          MEM_BU(0, active_layout_addr) != 2) {
+          MEM_B(0, active_layout_addr) = 2;
       }
     }
     // Diagnose a saved in-game Wheel layout that is displayed as selected but only starts

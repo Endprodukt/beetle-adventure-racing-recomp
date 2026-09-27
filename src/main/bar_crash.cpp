@@ -110,7 +110,7 @@ static LONG WINAPI bar_crash_filter(EXCEPTION_POINTERS* ep) {
 
 } // namespace
 
-void bar_crash_note_game_state(int state) {
+extern "C" void bar_crash_note_game_state(int state) {
     g_si_polls.fetch_add(1, std::memory_order_relaxed);
     if (g_last_game_state.exchange(state, std::memory_order_relaxed) != state)
         g_last_state_tick.store(GetTickCount64(), std::memory_order_relaxed);

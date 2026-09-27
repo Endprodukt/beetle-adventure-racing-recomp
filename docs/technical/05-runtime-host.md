@@ -413,14 +413,20 @@ For the report that a saved in-game Wheel layout works only after cycling the in
 layout global, plus changed N64 button outputs and `currentGameState`, to
 `<app config>/layout-trace.log`. The global snapshots also go to stderr.
 The file is created as soon as the host starts with `BAR_DBG_LAYOUT=1`.
-These are observation ranges, not confirmed
-field sizes. Compare the trace after loading the save and after switching away and back;
-do not force a layout value until that transition is measured.
+These are observation ranges, not confirmed field sizes. Compare the trace after loading the
+save and after switching away and back before changing any further layout fields.
 In the reported first-race/after-cycling comparison, both races show menu and active layout
 `02`, identical 72-byte `gCustomButtonMap` content, and button events at the SI response.
 Thus these sampled globals and host input do not explain the difference. The generated game
 functions that access those addresses can be located without a new game run using
 `py scripts/find-layout-references.py > layout-code.txt` on a machine with `RecompiledFuncs/`.
+
+The opt-in Force Wheel switch now waits until the selection overlay and its Wheel preset are
+available, then sets the menu layout word and the first byte of the active layout to `2` and
+copies that preset. It keeps the active selector at `2` during a race. Copying only the button
+preset left Options showing Standard and the analog Gas/Brake bindings inactive; manually
+selecting Wheel restored the pedals. These selector writes apply only while the Player 1 Wheel
+override is enabled and still need verification in a Windows game run.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
