@@ -206,7 +206,8 @@ void update_wheel_force_feedback(uint16_t game_rumble, bool rumble_changed) {
         }
         wheel_ffb.rumble = wheel_ffb.impact_effect < 0 && SDL_HapticRumbleSupported(wheel_ffb.handle) > 0 &&
                            SDL_HapticRumbleInit(wheel_ffb.handle) == 0;
-        wheel_debug_log("[wheel-ffb] " + std::string(SDL_JoystickName(joystick)) +
+        const char* wheel_name = SDL_JoystickName(joystick);
+        wheel_debug_log("[wheel-ffb] " + std::string(wheel_name ? wheel_name : "unknown wheel") +
             " features=" + std::to_string(features) +
             " spring=" + (wheel_ffb.spring_effect >= 0 ? "condition" : wheel_ffb.autocenter ? "autocenter" : "unsupported") +
             " impact=" + (wheel_ffb.impact_effect >= 0 ? "periodic torque" : wheel_ffb.rumble ? "simple rumble" : "unsupported"));
