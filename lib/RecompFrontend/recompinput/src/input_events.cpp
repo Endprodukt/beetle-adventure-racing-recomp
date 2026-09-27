@@ -51,6 +51,8 @@ static struct {
 static void close_wheel_ffb() {
     if (wheel_ffb.handle) {
         if (wheel_ffb.rumble) SDL_HapticRumbleStop(wheel_ffb.handle);
+        // Infinite spring effects must be stopped before the haptic device is released.
+        SDL_HapticStopAll(wheel_ffb.handle);
         if (wheel_ffb.autocenter) SDL_HapticSetAutocenter(wheel_ffb.handle, 0);
         if (wheel_ffb.spring_effect >= 0) SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
         SDL_HapticClose(wheel_ffb.handle);
@@ -60,6 +62,12 @@ static void close_wheel_ffb() {
     wheel_ffb.spring_effect = -1;
     wheel_ffb.spring_strength = -1;
     wheel_ffb.spring_uploaded_strength = -1;
+}
+
+void shutdown_wheel_force_feedback() {
+    // The normal event pump closes the effect when the bound joystick disappears or
+    // changes. Application shutdown does not generate either event, so do it explicitly.
+    close_wheel_ffb();
 }
 
 static bool matches_wheel_binding(SDL_Joystick* joystick, const InputField& field) {

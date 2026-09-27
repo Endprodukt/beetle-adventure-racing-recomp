@@ -46,6 +46,7 @@
 #include "main/bar_watchdog.h"                // bar::watchdog — all-thread stacks when the SDL pump stalls
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "frontend/bar_frontend.h"            // bar::frontend — RecompFrontend launcher/menus + input
+#include "recompinput/input_events.h"         // explicit Wheel FFB shutdown
 #endif
 
 // NOTE: BEETLE_ENABLE_UI guarded the bespoke RmlUi launcher that 019305c removed, and nothing
@@ -1206,6 +1207,11 @@ int main(int argc, char** argv) {
 
     // Blocks until the game exits.
     recomp::start(config);
+#ifdef BEETLE_ENABLE_FRONTEND
+    // SDL does not emit a device-removed event when the process exits. Explicitly
+    // stop the Wheel spring/rumble effect before the frontend tears down SDL.
+    recompinput::shutdown_wheel_force_feedback();
+#endif
     bar_stop_preempt_timer();
     return EXIT_SUCCESS;
 }
