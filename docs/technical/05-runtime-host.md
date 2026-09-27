@@ -366,11 +366,14 @@ button and axis events for assignment. The event thread also owns the haptic han
 the physical joystick identified by a Wheel Left/Right axis binding when player one selects the
 Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_HapticQuery` first
 tries a position-dependent spring condition on SDL's steering axis, falling back to autocenter
-if that effect cannot start. It initializes simple rumble only when supported and logs failed
-spring/rumble operations instead of trusting a capability flag. BAR's
+if that effect cannot start. For Wheel Game Rumble it prefers a 25 Hz periodic torque effect on
+the steering axis (sine, then triangle); simple rumble remains the fallback for devices without
+usable periodic effects. Effect capabilities, selection and failures are written to
+`<app config>/wheel-input.log`. BAR's
 existing pulse-density motor model supplies the unscaled rumble magnitude. The wheel output applies
 a capped `2.0 × level^0.4` curve to lift faint pulses, then applies only the Wheel editor's Game
-Rumble percentage. General Rumble Strength applies only to gamepads. Both the Center
+Rumble percentage; 100% can reach SDL's full periodic magnitude. General Rumble Strength applies
+only to gamepads. Both the Center
 Spring and Game Rumble percentages live in `controls.json` under `wheel_ffb`, defaulting to 20%
 and 50% respectively; zero disables its effect. Unsupported effects are reported once in the
 `[wheel-ffb]` log and do not affect the input bindings. The haptic device is never selected by a
