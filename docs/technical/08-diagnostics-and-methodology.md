@@ -113,20 +113,29 @@ virtualised 1536×864 view of a 1920×1080 window and produces an image that loo
 
 A fault and a hang need different instruments, and this port has both because it has seen both.
 
-`src/main/bar_crash.cpp` installs an **unhandled-exception filter**: on an access violation it walks
-the faulting thread with DbgHelp and prints a symbolized backtrace. It cannot see a hang, because a
-hang raises no exception. That gap was not theoretical -- Windows Error Reporting held six
+`src/main/bar_crash.cpp` installs an **unhandled-exception filter**: on a fatal Windows exception it
+writes `crash-<time>-<pid>-<tid>.txt` and a matching `.dmp` to the app config directory. The text
+contains the exception address, module offset, game state and actual running EXE path. The matching
+PDB beside the EXE is needed to resolve the dump to source lines. This handler cannot see a hang,
+because a hang raises no exception. That gap was not theoretical -- Windows Error Reporting held six
 `AppHangB1` records for this exe between 7 and 19 Sep 2026, all with the same hang-stack hash across
 five builds, and **not one of them contained a dump**, so no stack for that bug has ever existed.
 (`docs/KNOWN_ISSUES.md` carries the table.)
 
-`src/main/bar_watchdog.cpp` closes it. `update_gfx` increments a counter as its first statement; a
-monitor thread wakes every 500 ms, and when the counter has been stale for `BAR_WATCHDOG_SECS`
-(default 5) it walks **every** thread in the process and writes a symbolized report to
-`%LOCALAPPDATA%\beetle-adventure-racing-recomp\hang-report-<timestamp>-<n>.txt`, also echoing it to
-stderr. `update_gfx` is the right thing to watch because, per
+`src/main/bar_watchdog.cpp` closes it. `update_gfx` increments an SDL-pump counter as its first
+statement. The game's SI poll increments a second counter and records `currentGameState`; once a race
+(state 5) is under way, a game-poll stall also triggers even when audio and the window keep running.
+A monitor thread wakes every 500 ms and watches the pump for `BAR_WATCHDOG_SECS` (default 5), or
+the game poll during a race for at least 10 seconds. It walks **every** thread and writes a report to
+`%LOCALAPPDATA%\beetle-adventure-racing-recomp\hang-report-<timestamp>-<n>.txt` plus a matching
+`.dmp`, also echoing the text to
+stderr. With `portable.txt` beside the **running EXE**, the report goes beside that EXE instead;
+each report names the running EXE, both counters and the game state. A marker file is flushed before
+stack walking starts, so a stuck collector still leaves evidence. `update_gfx` is the right thing to watch because, per
 [05](05-runtime-host.md#sdl-event-ownership), it is the sole place SDL's queue is drained -- when it
 stops, the window stops answering Windows and an AppHang follows.
+Press **F12 while the game window is focused** to request the same all-thread snapshot manually,
+including when the picture is frozen but both counters keep advancing. No debugger is required.
 
 Three properties are worth knowing:
 

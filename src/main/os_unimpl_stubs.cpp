@@ -27,6 +27,7 @@
 
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
+#include "main/bar_watchdog.h" // all-thread report if the race stops polling controllers
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "recompinput/profiles.h"
 #endif
@@ -340,6 +341,10 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
       constexpr int64_t menu_layout_addr = (int64_t)(int32_t)0x8002CD40;
       constexpr int64_t active_layout_addr = (int64_t)(int32_t)0x8002D064;
       const int state = (int)MEM_W(0xA4, game_state_addr);
+      bar::watchdog::game_heartbeat(state);
+#ifdef _WIN32
+      { extern void bar_crash_note_game_state(int); bar_crash_note_game_state(state); }
+#endif
 #ifdef BEETLE_ENABLE_FRONTEND
       const bool force_wheel = recompinput::profiles::is_wheel_selected(0) &&
                                recompinput::profiles::get_force_wheel_button_preset();

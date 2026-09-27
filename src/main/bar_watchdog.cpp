@@ -58,12 +58,16 @@ namespace {
 
 constexpr int kMaxThreads  = 192;   // generous: the port runs well under 40
 constexpr int kMaxFrames   = 62;    // per thread
-constexpr int kMaxReports  = 4;     // per process run, so a pathological loop cannot spew files
+constexpr int kMaxReports  = 8;     // per process run, so a pathological loop cannot spew files
 
 std::atomic<uint64_t> g_beat{0};          // written by update_gfx, read by the monitor
+std::atomic<uint64_t> g_game_beat{0};     // written by the game's controller poll
+std::atomic<int>      g_game_state{-1};
+std::atomic<DWORD>    g_game_tid{0};
 std::atomic<bool>     g_installed{false};
 std::string           g_report_dir;       // resolved at install time; the monitor must not touch fs later
-DWORD                 g_pump_tid = 0;     // set by the first heartbeat: the thread we are watching
+char                  g_running_exe[MAX_PATH] = {};
+std::atomic<DWORD>    g_pump_tid{0};      // set by the first heartbeat: the thread we are watching
 double                g_threshold_secs = 5.0;
 
 // One thread's captured state. Fixed-size so filling it needs no allocation.
@@ -156,20 +160,27 @@ void print_frame(std::FILE* f, DWORD64 addr, int index) {
     }
 }
 
-void write_report(std::FILE* f, ThreadTrace* traces, int count, double stalled_secs, uint64_t beat) {
+void write_report(std::FILE* f, ThreadTrace* traces, int count, double stalled_secs,
+                  const char* stalled_loop) {
     SYSTEMTIME st{};
     GetLocalTime(&st);
-    std::fprintf(f, "[beetle-adventure-racing-recomp] *** HANG: the SDL pump thread has not run for %.1fs ***\n",
-                 stalled_secs);
-    std::fprintf(f, "time=%04u-%02u-%02u %02u:%02u:%02u  frame_counter=%llu  pump_tid=%lu  threads=%d\n\n",
+    std::fprintf(f, "[beetle-adventure-racing-recomp] *** HANG: %s has not advanced for %.1fs ***\n",
+                 stalled_loop, stalled_secs);
+    std::fprintf(f, "time=%04u-%02u-%02u %02u:%02u:%02u  gfx_frames=%llu  game_polls=%llu  game_state=%d  pump_tid=%lu  game_tid=%lu  threads=%d\n",
                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
-                 (unsigned long long)beat, (unsigned long)g_pump_tid, count);
+                 (unsigned long long)g_beat.load(std::memory_order_relaxed),
+                 (unsigned long long)g_game_beat.load(std::memory_order_relaxed),
+                 g_game_state.load(std::memory_order_relaxed),
+                 (unsigned long)g_pump_tid.load(std::memory_order_relaxed),
+                 (unsigned long)g_game_tid.load(std::memory_order_relaxed), count);
+    std::fprintf(f, "running_exe=%s\nreport_dir=%s\n\n", g_running_exe, g_report_dir.c_str());
 
     for (int i = 0; i < count; i++) {
         const ThreadTrace& t = traces[i];
-        std::fprintf(f, "--- thread %lu%s%s%ls%s\n",
+        std::fprintf(f, "--- thread %lu%s%s%s%ls%s\n",
                      (unsigned long)t.tid,
-                     (t.tid == g_pump_tid) ? "  [SDL PUMP -- this is the stalled one]" : "",
+                     (t.tid == g_pump_tid.load(std::memory_order_relaxed)) ? "  [SDL PUMP]" : "",
+                     (t.tid == g_game_tid.load(std::memory_order_relaxed)) ? "  [GAME POLL]" : "",
                      (t.name[0] != L'\0') ? "  \"" : "",
                      (t.name[0] != L'\0') ? t.name : L"",
                      (t.name[0] != L'\0') ? "\"" : "");
@@ -184,8 +195,20 @@ void write_report(std::FILE* f, ThreadTrace* traces, int count, double stalled_s
     std::fflush(f);
 }
 
-void capture(double stalled_secs, uint64_t beat, int report_index) {
+void capture(double stalled_secs, const char* stalled_loop, int report_index) {
     const HANDLE proc = GetCurrentProcess();
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    char leaf[128];
+    std::snprintf(leaf, sizeof(leaf), "hang-report-%04u%02u%02u-%02u%02u%02u-%d.txt",
+                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, report_index);
+    const std::string path = g_report_dir.empty() ? std::string(leaf) : (g_report_dir + "\\" + leaf);
+    // Leave a useful marker even if stack capture itself blocks on a damaged runtime lock.
+    if (std::FILE* f = std::fopen(path.c_str(), "w")) {
+        std::fprintf(f, "Hang detected: %s stalled %.1fs; capturing thread stacks.\nrunning_exe=%s\n",
+                     stalled_loop, stalled_secs, g_running_exe);
+        std::fclose(f);
+    }
 
     // --- Everything that allocates happens here, BEFORE the first suspend (rule 1). ---
     static std::vector<ThreadTrace> traces;   // reused across captures; sized once
@@ -243,19 +266,33 @@ void capture(double stalled_secs, uint64_t beat, int report_index) {
     }
 
     // --- Symbolize and write, with nothing suspended. ---
-    SYSTEMTIME st{};
-    GetLocalTime(&st);
-    char leaf[128];
-    std::snprintf(leaf, sizeof(leaf), "hang-report-%04u%02u%02u-%02u%02u%02u-%d.txt",
-                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, report_index);
-
-    const std::string path = g_report_dir.empty() ? std::string(leaf) : (g_report_dir + "\\" + leaf);
     if (std::FILE* f = std::fopen(path.c_str(), "w")) {
-        write_report(f, traces.data(), count, stalled_secs, beat);
+        write_report(f, traces.data(), count, stalled_secs, stalled_loop);
         std::fclose(f);
         std::fprintf(stderr, "[beetle-adventure-racing-recomp] hang report written to %s\n", path.c_str());
     }
-    write_report(stderr, traces.data(), count, stalled_secs, beat);
+    write_report(stderr, traces.data(), count, stalled_secs, stalled_loop);
+
+    // The text is complete before the dump: a stuck dump writer still leaves the stack report.
+    std::string dump_path = path;
+    dump_path.replace(dump_path.size() - 4, 4, ".dmp");
+    if (HANDLE file = CreateFileA(dump_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        file != INVALID_HANDLE_VALUE) {
+        const MINIDUMP_TYPE flags = static_cast<MINIDUMP_TYPE>(
+            MiniDumpNormal | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules |
+            MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithFullMemoryInfo);
+        const bool dumped = MiniDumpWriteDump(proc, GetCurrentProcessId(), file,
+                                              flags, nullptr, nullptr, nullptr) != FALSE;
+        const DWORD error = dumped ? 0 : GetLastError();
+        CloseHandle(file);
+        if (!dumped) DeleteFileA(dump_path.c_str());
+        if (std::FILE* report = std::fopen(path.c_str(), "a")) {
+            std::fprintf(report, "dump=%s  error=%lu  path=%s\n",
+                         dumped ? "written" : "failed", (unsigned long)error, dump_path.c_str());
+            std::fclose(report);
+        }
+    }
 
     SymCleanup(proc);
 }
@@ -263,30 +300,64 @@ void capture(double stalled_secs, uint64_t beat, int report_index) {
 void monitor_loop() {
     using clock = std::chrono::steady_clock;
 
-    uint64_t last_beat   = g_beat.load(std::memory_order_relaxed);
-    auto     last_change = clock::now();
-    bool     started     = false;        // do not arm until the first frame has run
-    bool     reported    = false;        // one report per stall episode
+    uint64_t last_beat = g_beat.load(std::memory_order_relaxed);
+    uint64_t last_game_beat = g_game_beat.load(std::memory_order_relaxed);
+    auto last_change = clock::now();
+    auto last_game_change = last_change;
+    bool started = false;                // do not arm until the first frame has run
+    bool reported = false;               // one report per pump stall episode
+    bool game_reported = false;
+    bool racing = false;
+    bool capture_key_down = false;
     int      report_count = 0;
 
     for (;;) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+        const auto now = clock::now();
         const uint64_t beat = g_beat.load(std::memory_order_relaxed);
         if (beat != last_beat) {
             last_beat   = beat;
-            last_change = clock::now();
+            last_change = now;
             started     = true;
-            reported    = false;         // the pump recovered: re-arm for the next episode
+            reported    = false;
+        }
+
+        const int state = g_game_state.load(std::memory_order_relaxed);
+        const uint64_t game_beat = g_game_beat.load(std::memory_order_relaxed);
+        if (state != 5) {
+            racing = false;
+            game_reported = false;
+        } else if (!racing || game_beat != last_game_beat) {
+            racing = true;
+            last_game_change = now;
+            game_reported = false;
+        }
+        last_game_beat = game_beat;
+
+        // F12 takes the same all-thread snapshot without pausing or attaching a debugger.
+        // It also covers a frozen picture when both monitored loops still make progress.
+        const bool key_down = (GetAsyncKeyState(VK_F12) & 0x8000) != 0;
+        DWORD foreground_pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &foreground_pid);
+        const bool manual_capture = key_down && !capture_key_down && foreground_pid == GetCurrentProcessId();
+        capture_key_down = key_down;
+        if (report_count >= kMaxReports) continue;
+        if (manual_capture) {
+            capture(0.0, "manual F12 snapshot", ++report_count);
             continue;
         }
-        if (!started || reported || report_count >= kMaxReports) continue;
-
-        const double stalled =
-            std::chrono::duration<double>(clock::now() - last_change).count();
-        if (stalled >= g_threshold_secs) {
-            reported = true;
-            capture(stalled, beat, ++report_count);
+        const double pump_stalled = std::chrono::duration<double>(now - last_change).count();
+        const double game_stalled = std::chrono::duration<double>(now - last_game_change).count();
+        const bool pump_hung = started && !reported && pump_stalled >= g_threshold_secs;
+        // Leave longer for track loading and paused menus than for the ordinary SDL pump.
+        const double game_timeout = g_threshold_secs > 10.0 ? g_threshold_secs : 10.0;
+        const bool game_hung = racing && !game_reported && game_stalled >= game_timeout;
+        if (pump_hung || game_hung) {
+            if (pump_hung) reported = true;
+            if (game_hung) game_reported = true;
+            capture(pump_hung ? pump_stalled : game_stalled,
+                    pump_hung ? "SDL pump" : "game controller poll (race)", ++report_count);
         }
     }
 }
@@ -313,6 +384,7 @@ void install() {
     } catch (...) {
         g_report_dir.clear();   // fall back to the working directory
     }
+    GetModuleFileNameA(nullptr, g_running_exe, MAX_PATH);
 
     // Thread names make the report readable. Win10 1607+; absent is not fatal.
     if (HMODULE k32 = GetModuleHandleW(L"kernel32.dll")) {
@@ -324,7 +396,8 @@ void install() {
 }
 
 void heartbeat() {
-    if (g_pump_tid == 0) g_pump_tid = GetCurrentThreadId();   // first frame names the pump thread
+    if (g_pump_tid.load(std::memory_order_relaxed) == 0)
+        g_pump_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     const uint64_t beat = g_beat.fetch_add(1, std::memory_order_relaxed) + 1;
 
     // Self-test. BAR_WATCHDOG_SELFTEST=<secs> wedges the pump thread once, on frame 300 (a few
@@ -343,6 +416,12 @@ void heartbeat() {
     }
 }
 
+void game_heartbeat(int game_state) {
+    g_game_state.store(game_state, std::memory_order_relaxed);
+    g_game_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    g_game_beat.fetch_add(1, std::memory_order_relaxed);
+}
+
 } // namespace bar::watchdog
 
 #else  // !_WIN32
@@ -353,6 +432,7 @@ void heartbeat() {
 namespace bar::watchdog {
 void install() {}
 void heartbeat() {}
+void game_heartbeat(int) {}
 } // namespace bar::watchdog
 
 #endif // _WIN32
