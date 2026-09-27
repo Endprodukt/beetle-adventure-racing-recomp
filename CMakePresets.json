@@ -1,0 +1,49 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-clang-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/WindowsClangCL.cmake"
+      }
+    },
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Windows clang-cl Debug",
+      "description": "Debug build using the supported Windows toolchain: clang-cl + Ninja",
+      "inherits": "windows-clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-clang-release",
+      "displayName": "Windows clang-cl Release",
+      "description": "Release build using the supported Windows toolchain: clang-cl + Ninja",
+      "inherits": "windows-clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Build Windows clang-cl Debug",
+      "configurePreset": "windows-clang-debug"
+    },
+    {
+      "name": "windows-clang-release",
+      "displayName": "Build Windows clang-cl Release",
+      "configurePreset": "windows-clang-release"
+    }
+  ]
+}
