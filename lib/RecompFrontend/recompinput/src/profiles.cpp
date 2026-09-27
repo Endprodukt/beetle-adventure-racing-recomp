@@ -38,6 +38,7 @@ static int keyboard_sp_profile_index = -1;
 static int controller_sp_profile_index = -1;
 static int wheel_profile_index = -1;
 static std::array<bool, 4> wheel_selected{}; // BAR exposes four N64 controller ports.
+static std::atomic_bool force_wheel_game_layout{false};
 static std::atomic_bool wheel_driving_state{false};
 static std::atomic_int wheel_center_strength{20};
 static std::atomic_int wheel_rumble_strength{50};
@@ -382,6 +383,14 @@ namespace recompinput {
         }
     }
 
+    bool profiles::get_force_wheel_game_layout() {
+        return force_wheel_game_layout.load(std::memory_order_relaxed);
+    }
+
+    void profiles::set_force_wheel_game_layout(bool force) {
+        force_wheel_game_layout.store(force, std::memory_order_relaxed);
+    }
+
     int profiles::get_sp_keyboard_profile_index() {
         return keyboard_sp_profile_index;
     }
@@ -503,6 +512,7 @@ namespace recompinput {
         config_json["profiles"] = std::vector<json>(profile_count);
         config_json["controllers"] = std::vector<json>(controller_count);
         config_json["wheel_players"] = wheel_selected;
+        config_json["force_wheel_game_layout"] = get_force_wheel_game_layout();
         config_json["wheel_ffb"] = { {"center_spring", get_wheel_center_strength()},
                                       {"game_rumble", get_wheel_rumble_strength()} };
 
@@ -607,6 +617,10 @@ namespace recompinput {
 
         auto version_it = config_json.find("version");
         if (version_it != config_json.end()) {
+            if (auto force = config_json.find("force_wheel_game_layout");
+                force != config_json.end() && force->is_boolean()) {
+                set_force_wheel_game_layout(force->get<bool>());
+            }
             if (auto ffb = config_json.find("wheel_ffb"); ffb != config_json.end() && ffb->is_object()) {
                 if (auto v = ffb->find("center_spring"); v != ffb->end() && v->is_number_integer())
                     set_wheel_center_strength(v->get<int>());
