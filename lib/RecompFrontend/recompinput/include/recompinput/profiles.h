@@ -58,10 +58,20 @@ namespace recompinput {
         std::string get_mp_keyboard_profile_name(int player_index);
         void initialize_input_bindings();
         int get_sp_controller_profile_index();
+        int get_wheel_profile_index();
+        bool is_wheel_selected(int player_index);
+        void set_wheel_selected(int player_index, bool selected);
+        bool get_force_wheel_button_preset();
+        void set_force_wheel_button_preset(bool force);
         int get_sp_keyboard_profile_index();
         int get_or_create_mp_keyboard_profile_index(int player_index);
         std::string get_string_from_controller_guid(ControllerGUID guid);
         bool get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out);
+        void set_wheel_driving_state(bool driving);
+        int get_wheel_center_strength();
+        int get_wheel_rumble_strength();
+        void set_wheel_center_strength(int percent);
+        void set_wheel_rumble_strength(int percent);
 
         bool load_controls_config(const std::filesystem::path& path);
         bool save_controls_config(const std::filesystem::path& path);

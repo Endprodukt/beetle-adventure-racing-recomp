@@ -29,7 +29,7 @@ namespace recompui {
     public:
         BindingButton(ResourceId rid, Element *parent, const std::string &mapped_binding);
         void add_pressed_callback(std::function<void()> callback);
-        void set_binding(const std::string &binding);
+        void set_binding(const std::string &binding, bool plain_text = false, const std::string &device_name = "");
         void set_is_binding(bool is_binding);
         Style* get_hover_style() { return &hover_style; }
         Style* get_focus_style() { return &focus_style; }

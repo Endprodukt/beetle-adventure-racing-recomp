@@ -11,6 +11,7 @@
 #include "elements/ui_toggle.h"
 #include "elements/ui_modal.h"
 #include "composites/ui_player_card.h"
+#include "librecomp/game.hpp"
 
 namespace recompui {
 

@@ -21,6 +21,10 @@
 
 #include "recomp.h"                 // MEM_W / MEM_B (dereference the local `rdram`)
 #include "game/config.hpp"          // bar::config::get_app_config_directory
+#ifdef BEETLE_ENABLE_FRONTEND
+#include "librecomp/overlays.hpp"
+#include "recompinput/profiles.h"
+#endif
 
 namespace bar_cheats {
 namespace {
@@ -50,6 +54,67 @@ std::filesystem::path cheats_file() {
     return bar::config::get_app_config_directory() / "cheats.cfg";
 }
 
+#ifdef BEETLE_ENABLE_FRONTEND
+// Force the game's own Wheel layout for Player 1 when the host-side Wheel profile asks for it.
+//
+// The selection overlay owns three 36-byte button presets. Earlier code called the overlay's
+// copy routine through get_function() before the overlay was guaranteed to be loaded, which is
+// fatal in librecomp. Here we first verify that section 167 really is loaded, then copy the same
+// Wheel preset directly. This avoids needing a recomp_context and keeps the operation bounded to
+// the exact source/destination tables already identified by the game's selection routine.
+void apply_force_wheel_button_preset(uint8_t* rdram) {
+    if (!recompinput::profiles::is_wheel_selected(0) ||
+        !recompinput::profiles::get_force_wheel_button_preset()) {
+        return;
+    }
+
+    constexpr int64_t game_state_addr   = se(0x80025CF0);
+    constexpr int64_t menu_layout_addr  = se(0x8002CD40);
+    constexpr int64_t active_layout_addr = se(0x8002D064);
+    constexpr int64_t active_buttons_addr = se(0x8002CCB0);
+
+    const int state = (int)MEM_W(0xA4, game_state_addr);
+
+    if (state == 14 && section_addresses != nullptr &&
+        recomp::overlays::get_loaded_func_by_section_index_offset(167, 0xD844) != nullptr) {
+        const uint32_t selection_base = (uint32_t)section_addresses[167];
+        constexpr uint32_t source_end = 0x21670u + 3u * 0x24u;
+        if (selection_base >= 0x80000000u && selection_base <= 0x80800000u - source_end) {
+            const int64_t selection_player = (int64_t)(int32_t)selection_base + 0x20DF0;
+            if (MEM_H(0, selection_player) == 0) {
+                const int64_t source = (int64_t)(int32_t)selection_base + 0x21670 + 2 * 0x24;
+                bool source_ready = false;
+                bool differs = false;
+                for (int word = 0; word < 9; ++word) {
+                    const uint32_t preset = (uint32_t)MEM_W(word * 4, source);
+                    source_ready |= preset != 0;
+                    differs |= preset != (uint32_t)MEM_W(word * 4, active_buttons_addr);
+                }
+
+                if (source_ready) {
+                    // The button table alone is not enough: Standard leaves analog Gas/Brake
+                    // inactive. Mirror the game's Wheel selector values once its preset is valid.
+                    if (MEM_W(0, menu_layout_addr) != 2) MEM_W(0, menu_layout_addr) = 2;
+                    if (MEM_BU(0, active_layout_addr) != 2) MEM_B(0, active_layout_addr) = 2;
+
+                    if (differs) {
+                        for (int word = 0; word < 9; ++word) {
+                            MEM_W(word * 4, active_buttons_addr) = MEM_W(word * 4, source);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Race initialization can restore the saved Standard selector after leaving the menu.
+    // Keep the active selector on Wheel while the explicit override remains enabled.
+    if (state == 5 && MEM_W(0, menu_layout_addr) == 2 && MEM_BU(0, active_layout_addr) != 2) {
+        MEM_B(0, active_layout_addr) = 2;
+    }
+}
+#endif
+
 } // namespace
 
 const Info& info(Id id) { return kInfo[(std::size_t)id]; }
@@ -66,6 +131,12 @@ bool any_enabled() {
 }
 
 void apply_frame(uint8_t* rdram) {
+#ifdef BEETLE_ENABLE_FRONTEND
+    // apply_frame is already the host's per-SI-frame RDRAM maintenance hook. Keep the Wheel
+    // override here so the SI bridge itself stays free of optional UI/profile dependencies.
+    apply_force_wheel_button_preset(rdram);
+#endif
+
     if (!any_enabled()) return;
     auto on = [](Id id) { return g_enabled[(std::size_t)id].load(std::memory_order_relaxed); };
 

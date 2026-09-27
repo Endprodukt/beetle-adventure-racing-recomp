@@ -24,6 +24,9 @@
 
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
+#ifdef BEETLE_ENABLE_FRONTEND
+#include "frontend/bar_frontend.h"
+#endif
 
 // Per-port input resolution lives in main.cpp / bar_input (they own the Win32 window / focus + SDL).
 extern "C" uint16_t bar_poll_keyboard(int port, int8_t* stick_x, int8_t* stick_y);
@@ -418,6 +421,10 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
             humanRacing |= (MEM_BU(0X98 + i, GS) != 0);
         }
         bar_rt64_set_hud_anchor(((st == 5) && sawSetup && ((phase == 0) || (phase == 3)) && (replay == 0) && humanRacing) ? 1 : 0);
+#ifdef BEETLE_ENABLE_FRONTEND
+        bar::frontend::set_wheel_driving_state((st == 5) && sawSetup && (phase == 0 || phase == 3) &&
+                                                (replay == 0) && humanRacing && (paused == 0));
+#endif
         bar_rt64_set_game_state((unsigned int)st);
         bar_rt64_set_hud_paused((paused != 0) ? 1 : 0);
 

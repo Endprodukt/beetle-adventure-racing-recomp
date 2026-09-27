@@ -14,6 +14,12 @@
 // SDL and the whole of RmlUi.
 union SDL_Event;
 
+// Keep the SI/game-state bridge lightweight: bar_frontend.h deliberately does not include the
+// recompinput headers, but the inline bridge below still forwards to the profile state owner.
+namespace recompinput::profiles {
+void set_wheel_driving_state(bool driving);
+}
+
 namespace bar::frontend {
 
 // Pump SDL events through the frontend. This REPLACES the host's own SDL_PollEvent loop rather
@@ -53,6 +59,12 @@ bool port_assigned(int port);
 // This port's live N64 button mask, plus its analog stick in the N64's own +/-80 range. Returns 0
 // and a centred stick for an unassigned port. Applies the player's own bindings.
 uint16_t poll_port(int port, int8_t* stick_x, int8_t* stick_y);
+
+// The SI hook publishes whether BAR currently has an active, unpaused race.
+// Wheel profiles use this to select driving or in-game-menu bindings.
+inline void set_wheel_driving_state(bool driving) {
+    recompinput::profiles::set_wheel_driving_state(driving);
+}
 
 // Ask recompinput to rumble this port's pad, or stop. Used only with BAR_RUMBLE_RAW=1: normally
 // pump_events() drives the pads from the motor model in src/main/bar_rumble.cpp.

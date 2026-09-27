@@ -6,8 +6,10 @@
 #include "elements/ui_container.h"
 #include "elements/ui_binding_button.h"
 #include "elements/ui_select.h"
+#include "elements/ui_slider.h"
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
+#include "librecomp/game.hpp"
 
 namespace recompui {
 
@@ -126,11 +128,20 @@ void GameInputRow::update_bindings(BindingList &new_bindings) {
         // skip update if no changes
         if (
             new_bindings[i].input_id == bindings[i].input_id &&
-            new_bindings[i].input_type == bindings[i].input_type) {
+            new_bindings[i].input_type == bindings[i].input_type &&
+            new_bindings[i].device_guid == bindings[i].device_guid &&
+            new_bindings[i].device_serial == bindings[i].device_serial &&
+            new_bindings[i].device_path == bindings[i].device_path &&
+            new_bindings[i].axis_rest == bindings[i].axis_rest &&
+            new_bindings[i].device_name == bindings[i].device_name) {
             continue;
         }
 
-        binding_buttons[i]->set_binding(new_bindings[i].to_string());
+        binding_buttons[i]->set_binding(new_bindings[i].to_string(),
+            new_bindings[i].input_type == recompinput::InputType::JoystickButton ||
+            new_bindings[i].input_type == recompinput::InputType::JoystickAxis ||
+            new_bindings[i].input_type == recompinput::InputType::JoystickHat,
+            new_bindings[i].device_name);
         bindings[i] = new_bindings[i];
     }
 }
@@ -191,8 +202,47 @@ void ConfigPageControls::create_game_input_contexts() {
     game_input_sections.menu.contexts.clear();
     game_input_sections.other.clear();
 
+    const bool wheel_profile = selected_profile_index == recompinput::profiles::get_wheel_profile_index();
+    if (wheel_profile) {
+        // BAR's Wheel controller layout, presented in driving order. These are the
+        // same persisted N64 inputs; only the labels and visible rows differ.
+        struct WheelAction { recompinput::GameInput input; const char *name; };
+        constexpr WheelAction actions[] = {
+            { recompinput::GameInput::X_AXIS_NEG, "Wheel Left" },
+            { recompinput::GameInput::X_AXIS_POS, "Wheel Right" },
+            { recompinput::GameInput::Y_AXIS_POS, "Gas" },
+            { recompinput::GameInput::Y_AXIS_NEG, "Brake" },
+            { recompinput::GameInput::R, "Shift Up" },
+            { recompinput::GameInput::L, "Shift Down" },
+            { recompinput::GameInput::C_UP, "Camera" },
+            { recompinput::GameInput::C_RIGHT, "Horn" },
+            { recompinput::GameInput::A, "Mirror" },
+            { recompinput::GameInput::B, "Hand Brake" },
+            { recompinput::GameInput::Z, "Abort" },
+            { recompinput::GameInput::START, "Pause / Start" },
+            { recompinput::GameInput::DPAD_UP, "Game Menu Up" },
+            { recompinput::GameInput::DPAD_DOWN, "Game Menu Down" },
+            { recompinput::GameInput::DPAD_LEFT, "Game Menu Left" },
+            { recompinput::GameInput::DPAD_RIGHT, "Game Menu Right" },
+            { recompinput::GameInput::GAME_MENU_CONFIRM, "Game Menu Confirm (A)" },
+            { recompinput::GameInput::GAME_MENU_BACK, "Game Menu Back (B)" },
+        };
+        for (const auto &action : actions) {
+            if (!recompinput::get_game_input_disabled(action.input)) {
+                game_input_sections.n64.contexts.push_back({
+                    action.name, recompinput::get_game_input_description(action.input),
+                    action.input, recompinput::get_game_input_clearable(action.input)
+                });
+            }
+        }
+    }
+
     for (int i = 0; i < static_cast<int>(recompinput::GameInput::COUNT); i++) {
         recompinput::GameInput input = static_cast<recompinput::GameInput>(i);
+        if (input == recompinput::GameInput::GAME_MENU_CONFIRM ||
+            input == recompinput::GameInput::GAME_MENU_BACK) {
+            continue; // shown only in the Wheel-specific game action list above
+        }
         if (recompinput::get_game_input_disabled(input)) {
             continue;
         }
@@ -206,7 +256,7 @@ void ConfigPageControls::create_game_input_contexts() {
 
         if (recompinput::get_game_input_is_menu(input)) {
             game_input_sections.menu.contexts.push_back(input_ctx);
-        } else {
+        } else if (!wheel_profile) {
             game_input_sections.n64.contexts.push_back(input_ctx);
         }
     }
@@ -355,8 +405,50 @@ void ConfigPageControls::render_body_mappings() {
     // right side
     {
         body->get_right()->clear_children();
+        body->get_right()->set_flex_direction(FlexDirection::Column);
         description_container = context.create_element<Element>(body->get_right(), 0, "p", true);
         description_container->set_text("");
+
+        if (selected_profile_index == recompinput::profiles::get_wheel_profile_index()) {
+            auto force_layout_row = context.create_element<Element>(body->get_right(), 0, "div", false);
+            force_layout_row->set_display(Display::Flex);
+            force_layout_row->set_align_items(AlignItems::Center);
+            force_layout_row->set_gap(12.0f);
+            force_layout_row->set_margin_top(24.0f);
+            auto force_layout_toggle = context.create_element<Toggle>(force_layout_row, ToggleSize::Medium);
+            force_layout_toggle->set_checked(recompinput::profiles::get_force_wheel_button_preset());
+            force_layout_toggle->add_checked_callback([](bool checked) {
+                recompinput::profiles::set_force_wheel_button_preset(checked);
+                recompinput::profiles::save_controls_config(
+                    recomp::get_config_path() / (config::controls::id + ".json"));
+            });
+            context.create_element<Label>(force_layout_row, "Force Wheel button layout in game", theme::Typography::LabelMD);
+            auto layout_hint = context.create_element<Label>(body->get_right(),
+                "Select Wheel in the game's controller layout and apply its button preset, even without a Controller Pak save.",
+                theme::Typography::LabelSM);
+            layout_hint->set_margin_top(8.0f);
+
+            auto add_ffb_slider = [&](const char* label, int value, void (*set_value)(int)) {
+                auto heading = context.create_element<Label>(body->get_right(), label, theme::Typography::LabelMD);
+                heading->set_margin_top(24.0f);
+                auto slider = context.create_element<Slider>(body->get_right(), SliderType::Percent);
+                slider->set_width(100.0f, Unit::Percent);
+                slider->set_min_value(0);
+                slider->set_max_value(100);
+                slider->set_step_value(1);
+                slider->set_value(value);
+                slider->add_value_changed_callback([set_value](double percent) {
+                    set_value(static_cast<int>(percent));
+                });
+            };
+            add_ffb_slider("Center Spring", recompinput::profiles::get_wheel_center_strength(),
+                           recompinput::profiles::set_wheel_center_strength);
+            add_ffb_slider("Game Rumble", recompinput::profiles::get_wheel_rumble_strength(),
+                           recompinput::profiles::set_wheel_rumble_strength);
+            auto hint = context.create_element<Label>(body->get_right(),
+                "FFB device: the physical wheel bound to Wheel Left or Wheel Right.", theme::Typography::LabelSM);
+            hint->set_margin_top(16.0f);
+        }
     }
 }
 
@@ -442,16 +534,29 @@ void ConfigPageControls::render_body_players() {
 }
 
 void ConfigPageControls::on_select_player_profile(int player_index, int profile_index) {
-    auto& assigned_player = recompinput::players::get_player(player_index);
     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+    recompinput::profiles::set_wheel_selected(player_index, profile_index == recompinput::profiles::get_wheel_profile_index());
+    if (profile_index == recompinput::profiles::get_wheel_profile_index()) {
+        device = recompinput::InputDevice::Controller;
+    } else if (device == recompinput::InputDevice::Keyboard) {
+        // Leaving Wheel restores the normal keyboard profile.
+        recompinput::profiles::set_input_profile_for_player(player_index, -1, recompinput::InputDevice::Controller);
+    }
     if (device != recompinput::InputDevice::COUNT) {
         recompinput::profiles::set_input_profile_for_player(player_index, profile_index, device);
+        force_update();
     }
+    // Persist the selected Wheel/player pairing immediately, even if the game
+    // starts or exits before the Controls tab is closed.
+    recompinput::profiles::save_controls_config(recomp::get_config_path() / (config::controls::id + ".json"));
 }
 
 void ConfigPageControls::on_edit_player_profile(int player_index) {
     selected_player = player_index;
     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
+    if (recompinput::profiles::is_wheel_selected(player_index)) {
+        device = recompinput::InputDevice::Controller;
+    }
     if (device != recompinput::InputDevice::COUNT) {
         selected_profile_index = recompinput::profiles::get_input_profile_for_player(player_index, device);
         multiplayer_view_mappings = true;
@@ -520,8 +625,8 @@ void ConfigPageControls::render_control_mappings() {
 
         game_input_rows.clear();
 
-        create_game_input_contexts();
         set_current_profile_index();
+        create_game_input_contexts();
 
         rows_wrappers.clear();
         for (auto *section : game_input_sections.get_all_sections()) {
@@ -562,9 +667,15 @@ void ConfigPageControls::render_control_mappings() {
 
 void ConfigPageControls::set_current_profile_index() {
     if (!multiplayer_enabled) {
-        selected_profile_index = single_player_show_keyboard_mappings
-            ? recompinput::profiles::get_sp_keyboard_profile_index()
-            : recompinput::profiles::get_sp_controller_profile_index();
+        // Keep the Wheel profile visible in single-player mode when it is
+        // selected for player 1; otherwise use the normal SP profile.
+        if (recompinput::profiles::is_wheel_selected(0)) {
+            selected_profile_index = recompinput::profiles::get_wheel_profile_index();
+        } else {
+            selected_profile_index = single_player_show_keyboard_mappings
+                ? recompinput::profiles::get_sp_keyboard_profile_index()
+                : recompinput::profiles::get_sp_controller_profile_index();
+        }
     }
 }
 
@@ -630,6 +741,9 @@ void ConfigPageControls::update_control_mappings() {
 
 recompinput::InputDevice ConfigPageControls::get_player_input_device() {
     if (multiplayer_enabled) {
+        if (selected_profile_index == recompinput::profiles::get_wheel_profile_index()) {
+            return recompinput::InputDevice::Controller;
+        }
         return recompinput::players::get_player_input_device(this->selected_player);
     }
 
@@ -641,7 +755,7 @@ recompinput::InputDevice ConfigPageControls::get_player_input_device() {
 void ConfigPageControls::on_bind_click(recompinput::GameInput game_input, int input_index) {
     recompinput::InputDevice device = get_player_input_device();
 
-    recompinput::binding::start_scanning(this->selected_player, game_input, input_index, device);
+    recompinput::binding::start_scanning(this->selected_player, game_input, input_index, device, selected_profile_index);
     awaiting_binding = true;
     awaiting_binding_for_menu_action_button = get_game_input_is_menu(game_input);
 }

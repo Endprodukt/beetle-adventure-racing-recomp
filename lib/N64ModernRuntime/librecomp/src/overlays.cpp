@@ -380,6 +380,23 @@ extern "C" recomp_func_t * get_function(int32_t addr) {
     return func_find->second;
 }
 
+recomp_func_t* recomp::overlays::get_loaded_func_by_section_index_offset(uint16_t section_index, uint32_t function_offset) {
+    for (const LoadedSection& loaded : loaded_sections) {
+        const SectionTableEntry& section = sections_info.code_sections[loaded.section_table_index];
+        if (section.index != section_index) continue;
+
+        for (size_t i = 0; i < section.num_funcs; ++i) {
+            const FuncEntry& entry = section.funcs[i];
+            if (entry.offset != function_offset) continue;
+
+            auto mapped = func_map.find(loaded.loaded_ram_addr + entry.offset);
+            return mapped != func_map.end() && mapped->second == entry.func ? entry.func : nullptr;
+        }
+        return nullptr;
+    }
+    return nullptr;
+}
+
 std::unordered_map<recomp_func_t*, recomp::overlays::BasePatchedFunction> recomp::overlays::get_base_patched_funcs() {
     std::unordered_map<recomp_func_t*, BasePatchedFunction> ret{};
 
