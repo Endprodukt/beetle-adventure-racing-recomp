@@ -2,14 +2,54 @@
 #include <mutex>
 #include <span>
 #include <atomic>
+#include <memory>
 
 #include "recompinput/recompinput.h"
 #include "recompinput/input_state.h"
 #include "recompinput/input_binding.h"
 #include "recompinput/players.h"
+#include "recompinput/profiles.h"
 #include "recompui/config.h"
 
 using namespace recompinput;
+
+namespace {
+struct WheelDeviceState {
+    SDL_JoystickID instance_id = -1;
+    bool is_game_controller = false;
+    std::string guid, serial, path;
+    std::vector<Uint8> buttons, hats;
+    std::vector<Sint16> axes;
+};
+
+// SDL joystick handles belong to the event/poll thread. The game reads input from another
+// thread, so publish a complete immutable sample rather than using SDL handles there.
+std::atomic<std::shared_ptr<const std::vector<WheelDeviceState>>> wheel_devices;
+
+void sample_wheel_devices() {
+    auto next = std::make_shared<std::vector<WheelDeviceState>>();
+    for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+        SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+        if (!joystick || !SDL_JoystickGetAttached(joystick)) continue;
+        WheelDeviceState state;
+        state.instance_id = SDL_JoystickInstanceID(joystick);
+        state.is_game_controller = SDL_IsGameController(i);
+        char guid[33]{};
+        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+        state.guid = guid;
+        if (const char* serial = SDL_JoystickGetSerial(joystick)) state.serial = serial;
+        if (const char* path = SDL_JoystickPath(joystick)) state.path = path;
+        for (int b = 0, n = SDL_JoystickNumButtons(joystick); b < n; ++b)
+            state.buttons.push_back(SDL_JoystickGetButton(joystick, b));
+        for (int h = 0, n = SDL_JoystickNumHats(joystick); h < n; ++h)
+            state.hats.push_back(SDL_JoystickGetHat(joystick, h));
+        for (int a = 0, n = SDL_JoystickNumAxes(joystick); a < n; ++a)
+            state.axes.push_back(SDL_JoystickGetAxis(joystick, a));
+        next->push_back(std::move(state));
+    }
+    wheel_devices.store(std::move(next), std::memory_order_release);
+}
+}
 
 template <typename T>
 using InputArray = std::array<T, max_num_players_supported>;
@@ -32,6 +72,7 @@ static struct {
 } InputState;
 
 void recompinput::poll_inputs() {
+    sample_wheel_devices();
     InputState.keys = SDL_GetKeyboardState(&InputState.numkeys);
     InputState.keymod = SDL_GetModState();
     static bool first_poll = true;
@@ -103,6 +144,19 @@ void recompinput::update_rumble() {
         rumbles_to_run = InputState.cur_rumble.size();
     }
     for (size_t i = 0; i < rumbles_to_run; i++) {
+        if (profiles::is_wheel_selected(static_cast<int>(i))) {
+            // The raw rumble comparison path must not buzz a gamepad while this
+            // player uses Wheel. Clear a previous Controller effect immediately.
+            InputState.cur_rumble[i] = 0.0f;
+            std::lock_guard lock{ InputState.controllers_mutex };
+            if (recompinput::players::is_single_player_mode()) {
+                for (const auto& controller : InputState.detected_controllers)
+                    do_rumble(controller, 0, 0);
+            } else if (auto& player = recompinput::players::get_player(i); player.controller != nullptr) {
+                do_rumble(player.controller, 0, 0);
+            }
+            continue;
+        }
         // Note: values are not accurate! just approximations based on feel
         if (InputState.rumble_active[i]) {
             InputState.cur_rumble[i] += 0.17f;
@@ -204,6 +258,104 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
     return false;
 }
 
+static const WheelDeviceState* find_wheel_device(const InputField& field,
+                                                 const std::vector<WheelDeviceState>& devices) {
+    if (field.device_guid.empty()) return nullptr;
+    for (const auto& device : devices) {
+        if (field.device_guid != device.guid) continue;
+        if (!field.device_serial.empty()) {
+            if (field.device_serial != device.serial) continue;
+        } else if (!field.device_path.empty()) {
+            if (field.device_path != device.path) continue;
+        }
+        return &device;
+    }
+    return nullptr;
+}
+
+static float wheel_input_state(const InputField& field) {
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return 0.0f;
+    const WheelDeviceState* joystick = find_wheel_device(field, *snapshot);
+    if (!joystick) return 0.0f;
+    switch (field.input_type) {
+    case InputType::JoystickButton:
+        return field.input_id >= 0 && (size_t)field.input_id < joystick->buttons.size() &&
+            joystick->buttons[field.input_id] ? 1.0f : 0.0f;
+    case InputType::JoystickHat:
+        return field.input_id >= 0 && (size_t)(field.input_id / 16) < joystick->hats.size() &&
+            (joystick->hats[field.input_id / 16] & (field.input_id % 16)) == (field.input_id % 16)
+            ? 1.0f : 0.0f;
+    case InputType::JoystickAxis: {
+        if (field.input_id == INT32_MIN) return 0.0f;
+        const int axis = std::abs(field.input_id) - 1;
+        if (axis < 0 || (size_t)axis >= joystick->axes.size()) return 0.0f;
+        const int raw = joystick->axes[axis];
+        const int range = field.input_id < 0 ? field.axis_rest + 32768 : 32767 - field.axis_rest;
+        if (range <= 0) return 0.0f;
+        const float value = (field.input_id < 0 ? field.axis_rest - raw : raw - field.axis_rest) / (float)range;
+        return std::clamp(value, 0.0f, 1.0f);
+    }
+    default:
+        return 0.0f;
+    }
+}
+
+float recompinput::wheel_event_binding_value(const SDL_Event& event, const InputField& field) {
+    SDL_JoystickID id;
+    switch (event.type) {
+    case SDL_JOYBUTTONDOWN:
+    case SDL_JOYBUTTONUP: id = event.jbutton.which; break;
+    case SDL_JOYHATMOTION: id = event.jhat.which; break;
+    case SDL_JOYAXISMOTION: id = event.jaxis.which; break;
+    default: return -1.0f;
+    }
+
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return -1.0f;
+    const WheelDeviceState* device = nullptr;
+    for (const auto& candidate : *snapshot) {
+        if (candidate.instance_id == id) {
+            device = &candidate;
+            break;
+        }
+    }
+    if (!device || field.device_guid.empty() || field.device_guid != device->guid ||
+        (!field.device_serial.empty() && field.device_serial != device->serial) ||
+        (field.device_serial.empty() && !field.device_path.empty() && field.device_path != device->path)) {
+        return -1.0f;
+    }
+
+    if (field.input_type == InputType::JoystickButton &&
+        (event.type == SDL_JOYBUTTONDOWN || event.type == SDL_JOYBUTTONUP) &&
+        field.input_id == event.jbutton.button) {
+        return event.type == SDL_JOYBUTTONDOWN ? 1.0f : 0.0f;
+    }
+    if (field.input_type == InputType::JoystickHat && event.type == SDL_JOYHATMOTION &&
+        field.input_id >= 0 && field.input_id / 16 == event.jhat.hat) {
+        const int direction = field.input_id % 16;
+        return direction && (event.jhat.value & direction) == direction ? 1.0f : 0.0f;
+    }
+    if (field.input_type == InputType::JoystickAxis && event.type == SDL_JOYAXISMOTION &&
+        field.input_id != INT32_MIN && std::abs(field.input_id) - 1 == event.jaxis.axis) {
+        const int range = field.input_id < 0 ? field.axis_rest + 32768 : 32767 - field.axis_rest;
+        if (range <= 0) return 0.0f;
+        const int distance = field.input_id < 0 ? field.axis_rest - event.jaxis.value : event.jaxis.value - field.axis_rest;
+        return std::clamp(distance / (float)range, 0.0f, 1.0f);
+    }
+    return -1.0f;
+}
+
+bool recompinput::is_raw_joystick_hat_event(const SDL_Event& event) {
+    if (event.type != SDL_JOYHATMOTION) return false;
+    auto snapshot = wheel_devices.load(std::memory_order_acquire);
+    if (!snapshot) return false;
+    for (const auto& device : *snapshot) {
+        if (device.instance_id == event.jhat.which) return !device.is_game_controller;
+    }
+    return false;
+}
+
 bool recompinput::should_override_keystate(SDL_Scancode key, SDL_Keymod mod) {
     // Override Enter when Alt is held.
     if (key == SDL_Scancode::SDL_SCANCODE_RETURN) {
@@ -229,6 +381,10 @@ float recompinput::get_input_analog(int controller_num, const InputField& field)
         return controller_button_state(controller_num, field.input_id) ? 1.0f : 0.0f;
     case InputType::ControllerAnalog:
         return controller_axis_state(controller_num, field.input_id, true);
+    case InputType::JoystickButton:
+    case InputType::JoystickAxis:
+    case InputType::JoystickHat:
+        return wheel_input_state(field);
     case InputType::Mouse:
         // TODO mouse support
         return 0.0f;
@@ -260,6 +416,10 @@ bool recompinput::get_input_digital(int controller_num, const InputField& field)
     case InputType::ControllerAnalog:
         // TODO adjustable threshold
         return controller_axis_state(controller_num, field.input_id, true) >= recompinput::axis_digital_threshold;
+    case InputType::JoystickButton:
+    case InputType::JoystickAxis:
+    case InputType::JoystickHat:
+        return wheel_input_state(field) >= recompinput::axis_digital_threshold;
     case InputType::Mouse:
         // TODO mouse support
         return false;

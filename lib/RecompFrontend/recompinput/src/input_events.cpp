@@ -4,12 +4,27 @@
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
 #include "ultramodern/ultramodern.hpp"
+#include "librecomp/game.hpp"
+#include <cmath>
+#include <fstream>
+#include <mutex>
 
 static struct {
     std::list<std::filesystem::path> files_dropped;
 } DropState;
 
 namespace recompinput {
+
+void wheel_debug_log(const std::string& line) {
+    static std::mutex mutex;
+    static bool first_line = true;
+    std::lock_guard lock{mutex};
+    const auto path = recomp::get_config_path() / "wheel-input.log";
+    std::ofstream out(path, first_line ? std::ios::trunc : std::ios::app);
+    first_line = false;
+    if (out) out << line << '\n';
+    std::fprintf(stderr, "%s\n", line.c_str());
+}
 
 void queue_if_enabled(SDL_Event* event) {
     if (!recompinput::all_input_disabled() && !binding::should_skip_events()) {
@@ -19,6 +34,265 @@ void queue_if_enabled(SDL_Event* event) {
 
 // Controllers plugged in while in single player mode will create profiles after switching to multiplayer.
 static std::unordered_map<uint64_t, ControllerGUID> deferred_controller_profiles;
+static std::unordered_map<SDL_JoystickID, SDL_Joystick*> open_wheel_devices;
+
+// All SDL haptic handles live on the same thread as the joystick event pump.
+static struct {
+    SDL_JoystickID id = -1;
+    SDL_Haptic* handle = nullptr;
+    int spring_effect = -1;
+    int impact_effect = -1;
+    Uint16 impact_type = 0;
+    int impact_uploaded_magnitude = 0;
+    bool impact_running = false;
+    int spring_strength = -1;
+    int spring_uploaded_strength = -1;
+    bool autocenter = false;
+    bool rumble = false;
+    bool open_failed = false;
+} wheel_ffb;
+
+static void close_wheel_ffb() {
+    if (wheel_ffb.handle) {
+        if (wheel_ffb.rumble) SDL_HapticRumbleStop(wheel_ffb.handle);
+        // Infinite spring effects must be stopped before the haptic device is released.
+        SDL_HapticStopAll(wheel_ffb.handle);
+        if (wheel_ffb.autocenter) SDL_HapticSetAutocenter(wheel_ffb.handle, 0);
+        if (wheel_ffb.spring_effect >= 0) SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+        if (wheel_ffb.impact_effect >= 0) SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.impact_effect);
+        SDL_HapticClose(wheel_ffb.handle);
+    }
+    wheel_ffb = {};
+    wheel_ffb.id = -1;
+    wheel_ffb.spring_effect = -1;
+    wheel_ffb.impact_effect = -1;
+    wheel_ffb.spring_strength = -1;
+    wheel_ffb.spring_uploaded_strength = -1;
+}
+
+void shutdown_wheel_force_feedback() {
+    // The normal event pump closes the effect when the bound joystick disappears or
+    // changes. Application shutdown does not generate either event, so do it explicitly.
+    close_wheel_ffb();
+}
+
+static bool matches_wheel_binding(SDL_Joystick* joystick, const InputField& field) {
+    if (!joystick || field.input_type != InputType::JoystickAxis || field.device_guid.empty()) return false;
+    char guid[33]{};
+    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+    if (field.device_guid != guid) return false;
+    if (!field.device_serial.empty()) {
+        const char* serial = SDL_JoystickGetSerial(joystick);
+        return serial && field.device_serial == serial;
+    }
+    if (!field.device_path.empty()) {
+        const char* path = SDL_JoystickPath(joystick);
+        return path && field.device_path == path;
+    }
+    return true;
+}
+
+static SDL_HapticEffect center_spring_effect(int percent) {
+    SDL_HapticEffect effect{};
+    effect.type = SDL_HAPTIC_SPRING;
+    effect.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
+    effect.condition.length = SDL_HAPTIC_INFINITY;
+    effect.condition.right_sat[0] = effect.condition.left_sat[0] = 0xFFFF;
+    effect.condition.right_coeff[0] = effect.condition.left_coeff[0] =
+        static_cast<Sint16>(0x7FFF * percent / 100);
+    return effect;
+}
+
+static SDL_HapticEffect wheel_impact_effect(Uint16 type, float strength) {
+    SDL_HapticEffect effect{};
+    effect.type = type;
+    effect.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
+    effect.periodic.length = 250;
+    effect.periodic.period = 40; // 25 Hz torque on the steering axis, rather than pad-style vibration
+    effect.periodic.magnitude = static_cast<Sint16>(std::lround(32767.0f * strength));
+    return effect;
+}
+
+static void set_center_spring(int percent) {
+    if (wheel_ffb.spring_effect >= 0) {
+        if (percent == 0) {
+            SDL_HapticStopEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+            return;
+        }
+        SDL_HapticEffect effect = center_spring_effect(percent);
+        if ((percent == wheel_ffb.spring_uploaded_strength ||
+             SDL_HapticUpdateEffect(wheel_ffb.handle, wheel_ffb.spring_effect, &effect) == 0) &&
+            SDL_HapticRunEffect(wheel_ffb.handle, wheel_ffb.spring_effect, 1) == 0) {
+            wheel_ffb.spring_uploaded_strength = percent;
+            return;
+        }
+        std::fprintf(stderr, "[wheel-ffb] spring failed: %s\n", SDL_GetError());
+        SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.spring_effect);
+        wheel_ffb.spring_effect = -1;
+    }
+    if (wheel_ffb.autocenter && SDL_HapticSetAutocenter(wheel_ffb.handle, percent) != 0) {
+        std::fprintf(stderr, "[wheel-ffb] autocenter failed: %s\n", SDL_GetError());
+        wheel_ffb.autocenter = false;
+    }
+}
+
+static SDL_Joystick* steering_joystick() {
+    const int profile = profiles::get_wheel_profile_index();
+    if (profile < 0 || !profiles::is_wheel_selected(0)) return nullptr;
+    for (GameInput direction : {GameInput::X_AXIS_NEG, GameInput::X_AXIS_POS}) {
+        for (size_t slot = 0; slot < num_bindings_per_input; ++slot) {
+            const InputField& field = profiles::get_input_binding(profile, direction, slot);
+            for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+                SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+                if (matches_wheel_binding(joystick, field)) return joystick;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void update_wheel_force_feedback(uint16_t game_rumble, bool rumble_changed) {
+    SDL_Joystick* joystick = steering_joystick();
+    const SDL_JoystickID id = joystick ? SDL_JoystickInstanceID(joystick) : -1;
+    if (wheel_ffb.id != id) close_wheel_ffb();
+    if (id < 0) return;
+    if (wheel_ffb.open_failed) return;
+
+    if (!wheel_ffb.handle) {
+        static bool haptics_unavailable = false;
+        if (haptics_unavailable) return;
+        if (SDL_WasInit(SDL_INIT_HAPTIC) == 0 && SDL_InitSubSystem(SDL_INIT_HAPTIC) != 0) {
+            std::fprintf(stderr, "[wheel-ffb] SDL haptics unavailable: %s\n", SDL_GetError());
+            haptics_unavailable = true;
+            return;
+        }
+        wheel_ffb.id = id;
+        if (!SDL_JoystickIsHaptic(joystick)) {
+            std::fprintf(stderr, "[wheel-ffb] %s: no haptic support\n", SDL_JoystickName(joystick));
+            wheel_ffb.open_failed = true;
+            return;
+        }
+        wheel_ffb.handle = SDL_HapticOpenFromJoystick(joystick);
+        if (!wheel_ffb.handle) {
+            std::fprintf(stderr, "[wheel-ffb] cannot open %s: %s\n", SDL_JoystickName(joystick), SDL_GetError());
+            wheel_ffb.open_failed = true;
+            return;
+        }
+        const unsigned int features = SDL_HapticQuery(wheel_ffb.handle);
+        wheel_ffb.autocenter = (features & SDL_HAPTIC_AUTOCENTER) != 0;
+        if (features & SDL_HAPTIC_GAIN) SDL_HapticSetGain(wheel_ffb.handle, 100);
+        // SDL's simple rumble is often only a faint pad-style vibration on a
+        // force-feedback wheel. Prefer real periodic steering torque when supported.
+        for (Uint16 type : {SDL_HAPTIC_SINE, SDL_HAPTIC_TRIANGLE}) {
+            if (!(features & type)) continue;
+            SDL_HapticEffect effect = wheel_impact_effect(type, 1.0f / 32767.0f);
+            wheel_ffb.impact_effect = SDL_HapticNewEffect(wheel_ffb.handle, &effect);
+            if (wheel_ffb.impact_effect >= 0) {
+                wheel_ffb.impact_type = type;
+                wheel_ffb.impact_uploaded_magnitude = 1;
+                break;
+            }
+            wheel_debug_log("[wheel-ffb] periodic effect unavailable: " + std::string(SDL_GetError()));
+        }
+        // A wheel's position-dependent spring is preferable to a driver's global
+        // autocenter setting, which some drivers claim but silently ignore.
+        if (features & SDL_HAPTIC_SPRING) {
+            SDL_HapticEffect effect = center_spring_effect(profiles::get_wheel_center_strength());
+            wheel_ffb.spring_effect = SDL_HapticNewEffect(wheel_ffb.handle, &effect);
+            if (wheel_ffb.spring_effect >= 0)
+                wheel_ffb.spring_uploaded_strength = profiles::get_wheel_center_strength();
+            else
+                std::fprintf(stderr, "[wheel-ffb] spring upload failed: %s\n", SDL_GetError());
+        }
+        wheel_ffb.rumble = wheel_ffb.impact_effect < 0 && SDL_HapticRumbleSupported(wheel_ffb.handle) > 0 &&
+                           SDL_HapticRumbleInit(wheel_ffb.handle) == 0;
+        const char* wheel_name = SDL_JoystickName(joystick);
+        wheel_debug_log("[wheel-ffb] " + std::string(wheel_name ? wheel_name : "unknown wheel") +
+            " features=" + std::to_string(features) +
+            " spring=" + (wheel_ffb.spring_effect >= 0 ? "condition" : wheel_ffb.autocenter ? "autocenter" : "unsupported") +
+            " impact=" + (wheel_ffb.impact_effect >= 0 ? "periodic torque" : wheel_ffb.rumble ? "simple rumble" : "unsupported"));
+    }
+
+    const int center = profiles::get_wheel_center_strength();
+    if (center != wheel_ffb.spring_strength) {
+        wheel_ffb.spring_strength = center;
+        set_center_spring(center);
+    }
+    if (rumble_changed && (wheel_ffb.impact_effect >= 0 || wheel_ffb.rumble)) {
+        // A wheel's force motor responds poorly to the tiny duty-cycle levels
+        // of an N64 Rumble Pak. Preserve zero and full scale, lift the quiet hits.
+        const float level = game_rumble / 65535.0f;
+        const float strength = std::min(1.0f, 2.0f * std::pow(level, 0.4f)) *
+                               (profiles::get_wheel_rumble_strength() / 100.0f);
+        if (wheel_ffb.impact_effect >= 0) {
+            if (strength <= 0.0f) {
+                if (wheel_ffb.impact_running) SDL_HapticStopEffect(wheel_ffb.handle, wheel_ffb.impact_effect);
+                wheel_ffb.impact_running = false;
+                return;
+            }
+            SDL_HapticEffect effect = wheel_impact_effect(wheel_ffb.impact_type, strength);
+            if ((effect.periodic.magnitude == wheel_ffb.impact_uploaded_magnitude ||
+                 SDL_HapticUpdateEffect(wheel_ffb.handle, wheel_ffb.impact_effect, &effect) == 0) &&
+                SDL_HapticRunEffect(wheel_ffb.handle, wheel_ffb.impact_effect, 1) == 0) {
+                wheel_ffb.impact_uploaded_magnitude = effect.periodic.magnitude;
+                wheel_ffb.impact_running = true;
+                return;
+            }
+            wheel_debug_log("[wheel-ffb] periodic torque failed: " + std::string(SDL_GetError()));
+            SDL_HapticDestroyEffect(wheel_ffb.handle, wheel_ffb.impact_effect);
+            wheel_ffb.impact_effect = -1;
+            wheel_ffb.impact_running = false;
+            wheel_ffb.rumble = SDL_HapticRumbleSupported(wheel_ffb.handle) > 0 &&
+                               SDL_HapticRumbleInit(wheel_ffb.handle) == 0;
+        }
+        if (!wheel_ffb.rumble) return;
+        if (strength > 0.0f) {
+            if (SDL_HapticRumblePlay(wheel_ffb.handle, strength, 250) != 0) {
+                std::fprintf(stderr, "[wheel-ffb] rumble playback failed: %s\n", SDL_GetError());
+                wheel_ffb.rumble = false;
+            }
+        }
+        else SDL_HapticRumbleStop(wheel_ffb.handle);
+    }
+}
+
+static void open_unmapped_joysticks() {
+    // The initial JOYDEVICEADDED events can be consumed during early SDL/renderer setup.
+    // Enumeration remains available, so open every currently connected raw device here too.
+    for (int i = 0, count = SDL_NumJoysticks(); i < count; ++i) {
+        if (SDL_IsGameController(i)) continue;
+        const SDL_JoystickID id = SDL_JoystickGetDeviceInstanceID(i);
+        if (id < 0 || open_wheel_devices.contains(id)) continue;
+        if (SDL_Joystick* joystick = SDL_JoystickOpen(i)) {
+            open_wheel_devices.emplace(id, joystick);
+            std::fprintf(stderr, "[recompinput] raw joystick opened: %s (instance %d)\n",
+                         SDL_JoystickName(joystick), id);
+        }
+    }
+    for (auto it = open_wheel_devices.begin(); it != open_wheel_devices.end();) {
+        if (SDL_JoystickGetAttached(it->second)) {
+            ++it;
+        } else {
+            if (wheel_ffb.id == it->first) close_wheel_ffb();
+            SDL_JoystickClose(it->second);
+            it = open_wheel_devices.erase(it);
+        }
+    }
+}
+
+static InputField wheel_input(SDL_JoystickID id, InputType type, int input_id) {
+    InputField field{type, input_id};
+    SDL_Joystick* joystick = SDL_JoystickFromInstanceID(id);
+    if (joystick != nullptr) {
+        char guid[33]{};
+        SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), guid, sizeof(guid));
+        field.device_guid = guid;
+        if (const char* serial = SDL_JoystickGetSerial(joystick)) field.device_serial = serial;
+        if (const char* path = SDL_JoystickPath(joystick)) field.device_path = path;
+        if (const char* name = SDL_JoystickName(joystick)) field.device_name = name;
+    }
+    return field;
+}
 
 static int get_or_create_controller_profile_index(ControllerGUID guid) {
     std::string default_profile_key = profiles::get_string_from_controller_guid(guid);
@@ -26,6 +300,18 @@ static int get_or_create_controller_profile_index(ControllerGUID guid) {
     if (profile_index < 0) {
         profile_index = profiles::add_input_profile(default_profile_key, "Controller", InputDevice::Controller, false);
         profiles::reset_profile_bindings(profile_index, InputDevice::Controller);
+    }
+    return profile_index;
+}
+
+int ensure_controller_profile(SDL_GameController* controller) {
+    if (!controller) return -1;
+    const ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);
+    if (guid.hash == 0) return -1;
+    int profile_index = profiles::get_controller_profile_index_from_sdl_controller(controller);
+    if (profile_index < 0) {
+        profile_index = get_or_create_controller_profile_index(guid);
+        profiles::add_controller(guid, profile_index);
     }
     return profile_index;
 }
@@ -43,6 +329,14 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_KEYDOWN:
     {
         SDL_KeyboardEvent* keyevent = &event->key;
+        if (profiles::is_wheel_selected(0) && !binding::is_binding() && !keyevent->repeat) {
+            static int wheel_key_logs = 0;
+            if (wheel_key_logs++ < 100) {
+                wheel_debug_log("[wheel-key] " +
+                                std::string(SDL_GetScancodeName(keyevent->keysym.scancode)) +
+                                " scancode=" + std::to_string(keyevent->keysym.scancode));
+            }
+        }
 
         // Skip repeated events when not in the menu
         if (!recompui::is_context_capturing_input() &&
@@ -59,7 +353,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
             if (keyevent->keysym.scancode == SDL_Scancode::SDL_SCANCODE_ESCAPE) {
                 binding::stop_scanning();
             }
-            else if (binding::get_scanning_device() == InputDevice::Keyboard) {
+            else if (!keyevent->repeat &&
+                     (binding::get_scanning_device() == InputDevice::Keyboard || binding::is_wheel_being_bound())) {
                 binding::set_scanned_input({ InputType::Keyboard, keyevent->keysym.scancode });
             }
         }
@@ -104,6 +399,59 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         recompinput::remove_controller_state(controller_event->which);
     }
     break;
+    case SDL_EventType::SDL_JOYDEVICEADDED:
+        open_unmapped_joysticks();
+        break;
+    case SDL_EventType::SDL_JOYDEVICEREMOVED:
+        if (auto it = open_wheel_devices.find(event->jdevice.which); it != open_wheel_devices.end()) {
+            if (wheel_ffb.id == it->first) close_wheel_ffb();
+            SDL_JoystickClose(it->second);
+            open_wheel_devices.erase(it);
+        }
+        break;
+    case SDL_EventType::SDL_JOYBUTTONDOWN:
+        if (profiles::is_wheel_selected(0) && !binding::is_binding()) {
+            // Temporary field diagnostic: the binding trace in profiles.cpp then shows
+            // whether this physical press became N64 B. Limit menu noise per launch.
+            static int wheel_button_logs = 0;
+            if (wheel_button_logs++ < 100) {
+                SDL_Joystick* source = SDL_JoystickFromInstanceID(event->jbutton.which);
+                const char* name = source ? SDL_JoystickName(source) : nullptr;
+                wheel_debug_log("[wheel-button] " + std::string(name ? name : "disconnected") +
+                                " Button " + std::to_string((int)event->jbutton.button + 1) +
+                                " (SDL " + std::to_string(event->jbutton.button) + ")");
+            }
+        }
+        if (binding::is_wheel_being_bound()) {
+            binding::set_scanned_input(wheel_input(event->jbutton.which, InputType::JoystickButton, event->jbutton.button));
+        } else {
+            queue_if_enabled(event);
+        }
+        break;
+    case SDL_EventType::SDL_JOYBUTTONUP:
+        queue_if_enabled(event);
+        break;
+    case SDL_EventType::SDL_JOYHATMOTION:
+        if (binding::is_wheel_being_bound() && event->jhat.value != SDL_HAT_CENTERED) {
+            binding::set_scanned_input(wheel_input(event->jhat.which, InputType::JoystickHat,
+                event->jhat.hat * 16 + event->jhat.value));
+        } else if (!binding::is_wheel_being_bound()) {
+            queue_if_enabled(event);
+        }
+        break;
+    case SDL_EventType::SDL_JOYAXISMOTION:
+        if (binding::is_wheel_being_bound()) {
+            const int rest = binding::wheel_axis_rest(event->jaxis.which, event->jaxis.axis);
+            const int movement = (int)event->jaxis.value - rest;
+            if (std::abs(movement) < 16384) break;
+            InputField field = wheel_input(event->jaxis.which, InputType::JoystickAxis,
+                movement > 0 ? event->jaxis.axis + 1 : -event->jaxis.axis - 1);
+            field.axis_rest = rest;
+            binding::set_scanned_input(field);
+        } else {
+            queue_if_enabled(event);
+        }
+        break;
     case SDL_EventType::SDL_QUIT: {
         if (!ultramodern::is_game_started()) {
             ultramodern::quit();
@@ -250,6 +598,7 @@ void handle_events() {
     SDL_Event cur_event;
     static bool started = false;
     static bool exited = false;
+    open_unmapped_joysticks();
     while (SDL_PollEvent(&cur_event) && !exited) {
         exited = sdl_event_filter(nullptr, &cur_event);
 

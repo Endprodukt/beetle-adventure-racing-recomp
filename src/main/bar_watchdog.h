@@ -1,5 +1,4 @@
-// bar_watchdog.h -- hang detector for the thread that pumps SDL. See bar_watchdog.cpp for why this
-// exists and what it writes. Both calls are no-ops off Windows, so callers need no #ifdef.
+// bar_watchdog.h -- captures all thread stacks if the SDL pump or game loop stalls.
 #pragma once
 
 namespace bar::watchdog {
@@ -11,5 +10,9 @@ void install();
 // One relaxed atomic increment. Call once per frame from update_gfx -- the callback that runs on the
 // thread owning the window, which is the thread whose stall this watches for.
 void heartbeat();
+
+// One relaxed atomic update from the game's SI poll. A frozen game loop can leave the SDL pump
+// and audio thread alive; while racing, that also needs to trigger a report.
+void game_heartbeat(int game_state);
 
 } // namespace bar::watchdog

@@ -287,7 +287,7 @@ one returning zeros, the identify handshake (`0xFE` then `0x80`), then 70 motor-
 one. Only `mempak_p0.pak` exists afterwards. Players three and four (skip counts 2 and 3) were
 verified in a 4-player battle with all ports on the keyboard; see `docs/KNOWN_ISSUES.md`.
 
-### Player assignment, and the two local changes to RecompFrontend
+### Player assignment and wheel input in RecompFrontend
 
 RecompFrontend assigns pads to players exactly one way: the Controls tab's "Assign players" button
 opens a modal and each player presses a button on the pad they want. Until someone has been through
@@ -307,6 +307,129 @@ to choose.
 any pad's controller profile index** changes, and logs every device SDL enumerates (with
 `game_controller=0/1`) and each player's pad and profile. A pad without an SDL game-controller
 mapping never reaches the list at all; the log says so.
+If SDL has enumerated a game controller before its per-device profile exists, auto assignment
+temporarily uses the initialized `Controller (SP)` profile. A later `refresh_players` pass replaces
+that fallback when the device-specific profile appears. `refresh_players` now creates any missing
+device-specific profile from the enumerated SDL controller, too: the initial
+`CONTROLLERDEVICEADDED` event can have been consumed before the input pump starts. The resulting
+`Controller` entry uses the standard gamepad defaults and is assigned automatically. `Controller
+(SP)` is the shared single-player fallback, not a separate device or a required user choice.
+Manual assignment uses the same fallback if creation still fails.
+
+The RecompFrontend menu's controller-button handler must tolerate a profile index of `-1`:
+events can arrive before the first assignment or from a controller without a profile.
+`check_menu_button_pressed` ignores that sentinel and compares only controller-button mappings;
+otherwise the first button event can index outside `input_profiles` and crash the host.
+The same sentinel can reach `Modal::render_menu_actions`: a 2026-09-26 hang report showed
+`player 1: Xbox One Controller (controller profile -1)` immediately before a Debug CRT
+`vector subscript out of range` in `profiles::get_input_binding`, called from
+`ui_modal.cpp:269` on the RT64 Present thread. The action hints now show player one's keyboard
+bindings until the controller profile is ready, and skip drawing if neither profile is valid.
+The subsequent SDL-pump hang report was caused by the blocking assertion dialog on the present
+thread; it was not a second input fault.
+Raw wheel devices bypass the SDL GameController button menu handler. The event pump queues their
+button, hat and axis events when it is not recording a binding; the UI resolves each event against
+player one's selected Wheel profile using the sampled device instance ID, GUID and serial/path.
+Each menu input generates the corresponding Rml key once per press, with an axis rearmed below
+15% travel and actuated at 50%. Key bindings stored in the Wheel profile follow the same menu
+action mapping. Toggle Menu can therefore open the settings from a raw wheel button, and the
+other menu actions work while the settings are open.
+The menu's action hints choose the Wheel profile when player one selected it, even if the
+assigned player card represents the keyboard because no SDL game controller is attached.
+With the Wheel profile selected, an unmapped hat on a raw joystick navigates the Recomp menu
+as a D-pad (up/down/left/right), including hold-to-repeat. Hats on SDL GameController devices
+keep their existing D-pad path. A hat direction explicitly bound to a Wheel menu action takes
+precedence over the default navigation.
+
+**Wheel profile.** The Controls profile dropdown also offers `Wheel`, including when player one
+has only a keyboard assignment. Its mappings live in `controls.json` alongside the controller
+profiles; `wheel_players` records which of BAR's four ports selected it. Auto assignment and a
+manual assignment retain that choice. Selecting a profile saves that choice immediately. At
+startup `config::finalize()` loads the controls once; the input poll treats `wheel_players` as
+authoritative even if a pad assignment has temporarily reset the active controller profile.
+The Wheel profile starts empty because USB wheels, pedals
+and shifters have no universal axis layout. `Edit Profile` listens to SDL joystick buttons, hats
+and axes from *every open device*, including joysticks that SDL does not classify as game
+controllers. Each binding stores its SDL GUID, serial if available, otherwise its device path,
+and the raw axis resting position. At play time the profile looks up that same physical device
+and normalizes an axis from its recorded rest toward the selected direction. A missing device
+contributes zero. This allows a separate pedal set and wheel to supply the same player's inputs
+without putting both in the Assign Players modal. Identical devices without serial or path
+cannot be distinguished; moving a serial-less device to a different USB path may require
+rebinding. The window thread samples all open joystick buttons, hats and axes once per input
+poll and publishes an immutable snapshot. The game's SI thread reads that snapshot while polling
+the profile, so it never holds an SDL joystick pointer that the event thread could close on
+disconnect. At each event-pump pass, unmapped devices are also opened by enumeration: an early
+`JOYDEVICEADDED` event is not a reliable prerequisite after SDL has already initialized. The
+`[recompinput] raw joystick opened` line confirms that a wheel/pedal/shifter can produce raw
+button and axis events for assignment. The event thread also owns the haptic handle, selecting
+the physical joystick identified by a Wheel Left/Right axis binding when player one selects the
+Wheel profile. It closes haptics before closing a disconnected joystick. `SDL_HapticQuery` first
+tries a position-dependent spring condition on SDL's steering axis, falling back to autocenter
+if that effect cannot start. For Wheel Game Rumble it prefers a 25 Hz periodic torque effect on
+the steering axis (sine, then triangle); simple rumble remains the fallback for devices without
+usable periodic effects. Effect capabilities, selection and failures are written to
+`<app config>/wheel-input.log`. BAR's
+existing pulse-density motor model supplies the unscaled rumble magnitude. The wheel output applies
+a capped `2.0 × level^0.4` curve to lift faint pulses, then applies only the Wheel editor's Game
+Rumble percentage; 100% can reach SDL's full periodic magnitude. General Rumble Strength applies
+only to gamepads. Both the Center
+Spring and Game Rumble percentages live in `controls.json` under `wheel_ffb`, defaulting to 20%
+and 50% respectively; zero disables its effect. Unsupported effects are reported once in the
+`[wheel-ffb]` log and do not affect the input bindings. The haptic device is never selected by a
+pedal, shifter, vJoy button, or player assignment. This first implementation serves player one;
+hardware force feedback behavior still requires measurement on an actual wheel.
+
+The Wheel editor labels the driving inputs by BAR action: X−/X+ are Wheel Left/Right, Y+/Y−
+are Gas/Brake, R/L are Shift Up/Down, C Up is Camera, C Right is Horn, A is Mirror, B is
+Hand Brake, Z is Abort, and Start is Pause / Start. The four N64 D-pad directions are
+shown as Game Menu Up/Down/Left/Right for an assignable wheel hat. Other N64 inputs are
+omitted from this editor. Recomp menu inputs remain visible separately.
+Stored input IDs and the controller editor do not change.
+Raw joystick binding slots use a smaller text font and a shortened device name to fit two
+bindings in each row; the full device name remains in the binding data and the slot title.
+Wheel scanning also accepts SDL keydown events into the same profile as raw wheel inputs;
+Escape cancels the scan. The runtime's input readers already evaluate keyboard fields in
+controller profiles, so a wheel action can be bound to a key in either slot.
+
+The Wheel profile now sends only its directly bound N64 buttons and analog stick. There is
+no driving/menu classification and no separate Game Menu Confirm/Back/Start inputs.
+The four D-pad rows map straight to the N64 D-pad without a state check. A/B/Start
+therefore keep the same N64 bits in both contexts; this also means those
+driving actions and their in-game menu functions cannot have separate physical bindings.
+Older `controls.json` entries for the removed virtual menu actions are ignored on load and
+omitted on save. Old Wheel C-Left/C-Down entries, hidden from its editor, are
+ignored at runtime so they cannot silently generate extra N64 actions. The Recomp menu's
+own input settings are independent and remain available.
+The ordinary keyboard profile is still merged for standard gamepad profiles, but not for
+Wheel: keys can be bound directly in Wheel, and merging Keyboard (SP) made a key such as
+A trigger both Wheel Horn and the default steering-left action. The renderer's existing
+HUD game-state logic remains separate from this input path. `[wheel-button]` logs raw
+button-down events with the one-based editor button number and the zero-based SDL ID,
+and `[wheel-key]` logs keydown scancodes to `<app config>/wheel-input.log`.
+
+The game's own Options → Controller layout is separate from this host-side Wheel profile.
+For the report that a saved in-game Wheel layout works only after cycling the in-game option,
+`BAR_DBG_LAYOUT=1` logs changes to four bytes at the decomp symbol
+`gOptionsControllerLayoutMenu` (`0x8002CD40`) and sixteen bytes at `gControllerLayout`
+(`0x8002D064`), the 72 bytes between `gCustomButtonMap` (`0x8002D01C`) and the
+layout global, plus changed N64 button outputs and `currentGameState`, to
+`<app config>/layout-trace.log`. The global snapshots also go to stderr.
+The file is created as soon as the host starts with `BAR_DBG_LAYOUT=1`.
+These are observation ranges, not confirmed field sizes. Compare the trace after loading the
+save and after switching away and back before changing any further layout fields.
+In the reported first-race/after-cycling comparison, both races show menu and active layout
+`02`, identical 72-byte `gCustomButtonMap` content, and button events at the SI response.
+Thus these sampled globals and host input do not explain the difference. The generated game
+functions that access those addresses can be located without a new game run using
+`py scripts/find-layout-references.py > layout-code.txt` on a machine with `RecompiledFuncs/`.
+
+The opt-in Force Wheel switch now waits until the selection overlay and its Wheel preset are
+available, then sets the menu layout word and the first byte of the active layout to `2` and
+copies that preset. It keeps the active selector at `2` during a race. Copying only the button
+preset left Options showing Standard and the analog Gas/Brake bindings inactive; manually
+selecting Wheel restored the pedals. These selector writes apply only while the Player 1 Wheel
+override is enabled and still need verification in a Windows game run.
 
 **Keyboard as a player (second local change, `commit_player_assignment`).** Upstream's commit only
 *set* the profile for the device a player was assigned, so whatever a player held before survived.
@@ -461,10 +584,13 @@ Body Harvest's model with its constants unchanged, one instance per port. Every 
 from the joybus motor register or from ultramodern's `set_rumble` callback, goes through
 `bar_pak_motor` (`main.cpp`) into `bar::rumble::motor`. Once per frame, `pump_events()` works out
 each port's on-fraction since the last frame (the duty), low-passes it (40 ms up, 80 ms down),
-multiplies by General → Rumble Strength, and sends the result to both motors of that player's own pad
+multiplies by General → Rumble Strength for gamepads, and sends the result to both motors of that player's own pad
 (`recompinput::players::get_player(port).controller`). Values below `0x0400` become 0. A new value is
 sent when it changes by `0x0800` or more, and a held level is re-sent every 100 ms with a 250 ms
 duration. With Mute When Not In Focus on, alt-tabbing away stops the motor too.
+When player one selects the Wheel profile, its assigned gamepad gets no rumble; a previously
+active pad effect is stopped. The Wheel haptic device receives the unscaled motor level through
+its own Game Rumble slider. Other players' gamepads keep their General strength setting.
 `recompinput::update_rumble` is no longer called.
 
 Measured (`BAR_RUMBLE_TRACE=1`, `build-cmake`, where the model runs for the trace only, in the same

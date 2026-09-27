@@ -174,9 +174,10 @@ void players::auto_assign_controllers(SDL_GameController* const* controllers, si
         Player &player = PlayerState.players[i];
         if (player.controller != nullptr) {
             int cont_profile_index = profiles::get_controller_profile_index_from_sdl_controller(player.controller);
-            if (cont_profile_index >= 0) {
-                profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
-            }
+            // SDL can enumerate a controller before its device-specific profile is registered.
+            // Keep it playable with the default controller map until that profile arrives.
+            if (cont_profile_index < 0) cont_profile_index = profiles::get_sp_controller_profile_index();
+            profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
         }
     }
 
@@ -186,6 +187,11 @@ void players::auto_assign_controllers(SDL_GameController* const* controllers, si
     // profile has none. get_n64_input reads a player's controller and keyboard
     // profiles and merges them, so player one can use either at any moment.
     profiles::set_input_profile_for_player(0, profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
+    for (int i = 0; i < (int)PlayerState.players.get_count(); ++i) {
+        if (profiles::is_wheel_selected(i)) {
+            profiles::set_input_profile_for_player(i, profiles::get_wheel_profile_index(), InputDevice::Controller);
+        }
+    }
 }
 
 void playerassignment::stop_and_close_modal() {
@@ -220,6 +226,7 @@ void playerassignment::commit_player_assignment() {
         int kb_profile_index = -1;
         if (player.controller != nullptr) {
             cont_profile_index = profiles::get_controller_profile_index_from_sdl_controller(player.controller);
+            if (cont_profile_index < 0) cont_profile_index = profiles::get_sp_controller_profile_index();
             if (i == 0 && !keyboard_taken) {
                 kb_profile_index = profiles::get_sp_keyboard_profile_index();
             }
@@ -228,6 +235,9 @@ void playerassignment::commit_player_assignment() {
         }
         profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
         profiles::set_input_profile_for_player(i, kb_profile_index, InputDevice::Keyboard);
+        if (profiles::is_wheel_selected(i)) {
+            profiles::set_input_profile_for_player(i, profiles::get_wheel_profile_index(), InputDevice::Controller);
+        }
     }
 }
 

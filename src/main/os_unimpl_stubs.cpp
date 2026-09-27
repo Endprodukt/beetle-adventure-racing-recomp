@@ -21,9 +21,23 @@
 #include <chrono>   // R6 diagnostic: BAR_DBG_FPS loop-rate counter (remove after)
 #include <cstdio>   // R6 diagnostic
 #include <cstring>  // BAR_BURST_ON_ROLL: memcpy/strchr/strcmp for the burst-capture spec parse
+#include <fstream>  // BAR_DBG_LAYOUT: log a GUI-subsystem build without a console
+#include <librecomp/game.hpp>
+#include <librecomp/overlays.hpp>
 
 #include "main/bar_cheats.h"   // bar_cheats::apply_frame (host-side RDRAM cheat pokes)
 #include "main/bar_input.hpp"  // bar::input::mempak_{read,write} (per-port Controller Pak store)
+#include "main/bar_watchdog.h" // all-thread report if the race stops polling controllers
+#ifdef _WIN32
+extern "C" void bar_crash_note_game_state(int state);
+#endif
+#ifdef BEETLE_ENABLE_FRONTEND
+#include "recompinput/profiles.h"
+#endif
+#ifdef BEETLE_ENABLE_FRONTEND
+#include "frontend/bar_frontend.h"
+#include "recompinput/profiles.h"
+#endif
 
 // Per-port input resolution lives in main.cpp / bar_input (they own the Win32 window / focus + SDL).
 extern "C" uint16_t bar_poll_keyboard(int port, int8_t* stick_x, int8_t* stick_y);
@@ -321,6 +335,113 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
     // controller poll (per frame) in both the menus and a race, the right cadence for the
     // "every frame" cheat writes (unlocks, debug-options flags). No-op when nothing is enabled.
     bar_cheats::apply_frame(rdram);
+    // The game routine copies one of the selection overlay's 36-byte button presets
+    // into Player 1's active table; it does not set any controller-layout globals.
+    // Use it for a restored Wheel save or for the explicit host-side Wheel override.
+    {
+      constexpr int64_t game_state_addr = (int64_t)(int32_t)0x80025CF0;
+      constexpr int64_t menu_layout_addr = (int64_t)(int32_t)0x8002CD40;
+      constexpr int64_t active_layout_addr = (int64_t)(int32_t)0x8002D064;
+      const int state = (int)MEM_W(0xA4, game_state_addr);
+      bar::watchdog::game_heartbeat(state);
+#ifdef _WIN32
+      bar_crash_note_game_state(state);
+#endif
+#ifdef BEETLE_ENABLE_FRONTEND
+      const bool force_wheel = recompinput::profiles::is_wheel_selected(0) &&
+                               recompinput::profiles::get_force_wheel_button_preset();
+#else
+      const bool force_wheel = false;
+#endif
+      if (state == 14 && section_addresses != nullptr &&
+          (force_wheel || (MEM_W(0, menu_layout_addr) == 2 && MEM_BU(0, active_layout_addr) == 2))) {
+          // A menu state can be visible before the selection overlay is loaded.
+          // get_function() asserts and exits for a missing address, so check the
+          // loaded section and its ownership before reading overlay data.
+          if (recomp_func_t* apply = recomp::overlays::get_loaded_func_by_section_index_offset(167, 0xD844)) {
+              const uint32_t selection_base = (uint32_t)section_addresses[167];
+              if (selection_base >= 0x80000000u &&
+                  selection_base <= 0x80800000u - (0x21670u + 3u * 0x24u)) {
+                  const int64_t selection_player = (int64_t)(int32_t)selection_base + 0x20DF0;
+                  if (MEM_H(0, selection_player) == 0) {
+                      // func_selection_0040D844 copies the overlay's Wheel preset to Player 1.
+                      // Wait until its data is populated, then reapply if the game overwrites it.
+                      const int64_t source = (int64_t)(int32_t)selection_base + 0x21670 + 2 * 0x24;
+                      const int64_t active = game_state_addr + 0x6FC0;
+                      bool source_ready = false;
+                      bool differs = false;
+                      for (int word = 0; word < 9; ++word) {
+                          const uint32_t preset = MEM_W(word * 4, source);
+                          source_ready |= preset != 0;
+                          differs |= preset != MEM_W(word * 4, active);
+                      }
+                      if (source_ready && force_wheel) {
+                          // Copying the button table alone leaves Options on Standard and
+                          // does not enable pedal input. Update the observed menu word and
+                          // active layout byte only after the selection overlay is ready.
+                          if (MEM_W(0, menu_layout_addr) != 2) MEM_W(0, menu_layout_addr) = 2;
+                          if (MEM_BU(0, active_layout_addr) != 2) MEM_B(0, active_layout_addr) = 2;
+                      }
+                      if (source_ready && differs) {
+                          recomp_context apply_ctx = *ctx;
+                          apply_ctx.r4 = 2;
+                          apply(rdram, &apply_ctx);
+                      }
+                  }
+              }
+          }
+      }
+      // Race initialization may restore the saved Standard selector after leaving
+      // the menu. Keep the active layout on Wheel while the override is enabled.
+      if (state == 5 && force_wheel && MEM_W(0, menu_layout_addr) == 2 &&
+          MEM_BU(0, active_layout_addr) != 2) {
+          MEM_B(0, active_layout_addr) = 2;
+      }
+    }
+    // Diagnose a saved in-game Wheel layout that is displayed as selected but only starts
+    // working after cycling the game's Options -> Controller setting. These are two distinct
+    // game globals, independent of RecompFrontend's wheel_players in controls.json. Capture
+    // their nearby bytes, the custom button map, and the active 36-byte preset table on change.
+    // func_selection_0040D844 copies 0x24 bytes from a selected preset into 0x8002CCB0
+    // for player one; logging only 0x8002D01C missed that actual apply step.
+    // BAR_DBG_LAYOUT=1, then compare this trace before and after toggling the game option.
+    { static const bool dbg = std::getenv("BAR_DBG_LAYOUT") != nullptr;
+      if (dbg) {
+          constexpr int64_t menu_layout = (int64_t)(int32_t)0x8002CD40;
+          constexpr int64_t active_layout = (int64_t)(int32_t)0x8002D064;
+          constexpr int64_t custom_buttons = (int64_t)(int32_t)0x8002D01C;
+          constexpr int64_t applied_preset = (int64_t)(int32_t)0x8002CCB0;
+          unsigned char snapshot[128];
+          for (int i = 0; i < 4; ++i) snapshot[i] = (unsigned char)MEM_BU(i, menu_layout);
+          for (int i = 0; i < 16; ++i) snapshot[4 + i] = (unsigned char)MEM_BU(i, active_layout);
+          for (int i = 0; i < 72; ++i) snapshot[20 + i] = (unsigned char)MEM_BU(i, custom_buttons);
+          for (int i = 0; i < 36; ++i) snapshot[92 + i] = (unsigned char)MEM_BU(i, applied_preset);
+          static unsigned char previous[128]{};
+          static bool first = true;
+          static int previous_state = -1;
+          const int state = (int)MEM_W(0xA4, (int64_t)(int32_t)0x80025CF0);
+          if (first || state != previous_state || std::memcmp(snapshot, previous, sizeof(snapshot)) != 0) {
+              first = false;
+              previous_state = state;
+              std::memcpy(previous, snapshot, sizeof(snapshot));
+              char line[512];
+              int length = std::snprintf(line, sizeof(line),
+                  "[BAR_DBG_LAYOUT] state=%d menu@8002CD40=%02X%02X%02X%02X active@8002D064=",
+                  state, snapshot[0], snapshot[1], snapshot[2], snapshot[3]);
+              for (int i = 4; i < 20 && length < (int)sizeof(line) - 3; ++i)
+                  length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
+              length += std::snprintf(line + length, sizeof(line) - length, " map@8002D01C=");
+              for (int i = 20; i < 92 && length < (int)sizeof(line) - 3; ++i)
+                  length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
+              length += std::snprintf(line + length, sizeof(line) - length, " applied@8002CCB0=");
+              for (int i = 92; i < 128 && length < (int)sizeof(line) - 3; ++i)
+                  length += std::snprintf(line + length, sizeof(line) - length, "%02X", snapshot[i]);
+              std::fprintf(stderr, "%s\n", line);
+              std::fflush(stderr);
+              std::ofstream out(recomp::get_config_path() / "layout-trace.log", std::ios::app);
+              if (out) out << line << '\n';
+          }
+      } }
     // R6 diagnostic (env-gated BAR_DBG_FPS): the menu/game main loop polls the controller once per
     // iteration, so this hook's call rate == the loop rate. The page-slide animation advances per loop
     // iteration; if this is >> native 60 Hz the slide completes in ~1 display frame ("disabled"-looking).
@@ -388,9 +509,11 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
         // which is reset whenever the game state changes.
         static int32_t lastState = -0x7FFF;
         static bool sawSetup = false;
+        static bool sawHumanRacing = false;
         if (st != lastState) {
             lastState = st;
             sawSetup = false;
+            sawHumanRacing = false;
         }
         if ((phase == 1) || (phase == 3)) {
             sawSetup = true;
@@ -417,7 +540,12 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
         for (int i = 0; (i < numPlayers) && (i < 4); i++) {
             humanRacing |= (MEM_BU(0X98 + i, GS) != 0);
         }
+        if ((st == 5) && sawSetup && (phase == 0) && humanRacing) sawHumanRacing = true;
         bar_rt64_set_hud_anchor(((st == 5) && sawSetup && ((phase == 0) || (phase == 3)) && (replay == 0) && humanRacing) ? 1 : 0);
+#ifdef BEETLE_ENABLE_FRONTEND
+        const bool wheelDriving = st == 5 && (phase == 0 || phase == 3) && replay == 0 && paused == 0;
+        recompinput::profiles::set_wheel_driving_state(wheelDriving);
+#endif
         bar_rt64_set_game_state((unsigned int)st);
         bar_rt64_set_hud_paused((paused != 0) ? 1 : 0);
 
@@ -606,6 +734,19 @@ extern "C" void __osSiRawStartDma_recomp(uint8_t* rdram, recomp_context* ctx) {
                 } else {                         // CONT_CMD_READ_BUTTON
                     int8_t sx = 0, sy = 0;
                     const uint16_t button = bar_poll_keyboard(i, &sx, &sy);
+                    if (i == 0 && std::getenv("BAR_DBG_LAYOUT") != nullptr) {
+                        static uint16_t previous_button = 0;
+                        if (button != previous_button) {
+                            previous_button = button;
+                            const int state = (int)MEM_W(0xA4, (int64_t)(int32_t)0x80025CF0);
+                            char line[112];
+                            std::snprintf(line, sizeof(line),
+                                "[BAR_DBG_LAYOUT] input state=%d buttons=%04X stick=%d,%d",
+                                state, button, (int)sx, (int)sy);
+                            std::ofstream out(recomp::get_config_path() / "layout-trace.log", std::ios::app);
+                            if (out) out << line << '\n';
+                        }
+                    }
                     MEM_B(2, blk) = 0x04;        // rxsize=4, no channel error
                     MEM_B(4, blk) = (int8_t)(uint8_t)(button >> 8);
                     MEM_B(5, blk) = (int8_t)(uint8_t)(button & 0xFF);

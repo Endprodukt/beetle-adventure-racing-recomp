@@ -74,6 +74,10 @@ PlayerCard::PlayerCard(
         recompinput::InputDevice device = has_controller ? recompinput::InputDevice::Controller : recompinput::InputDevice::Keyboard;
         const std::vector<int> profile_indices = recompinput::profiles::get_indices_for_custom_profiles(device);
         int cur_profile = recompinput::profiles::get_input_profile_for_player(player_index, device);
+        int wheel_profile = recompinput::profiles::get_wheel_profile_index();
+        if (recompinput::profiles::is_wheel_selected(player_index)) {
+            cur_profile = wheel_profile;
+        }
 
         std::vector<SelectOption> options;
 
@@ -99,6 +103,8 @@ PlayerCard::PlayerCard(
                 std::to_string(recompinput::profiles::get_sp_keyboard_profile_index())
             );
         }
+
+        options.emplace_back("Wheel", std::to_string(wheel_profile));
 
         for (size_t i = 0; i < profile_indices.size(); ++i) {
             int profile_index = profile_indices[i];

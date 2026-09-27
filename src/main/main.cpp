@@ -21,6 +21,7 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -45,6 +46,7 @@
 #include "main/bar_watchdog.h"                // bar::watchdog — all-thread stacks when the SDL pump stalls
 #ifdef BEETLE_ENABLE_FRONTEND
 #include "frontend/bar_frontend.h"            // bar::frontend — RecompFrontend launcher/menus + input
+#include "recompinput/input_events.h"         // explicit Wheel FFB shutdown
 #endif
 
 // NOTE: BEETLE_ENABLE_UI guarded the bespoke RmlUi launcher that 019305c removed, and nothing
@@ -992,6 +994,10 @@ int main(int argc, char** argv) {
     // ~/.config/beetle-adventure-racing-recomp on Linux), or the exe dir when a portable.txt is present. librecomp
     // writes saves / mod config here.
     recomp::register_config_path(bar::config::get_app_config_directory());
+    if (std::getenv("BAR_DBG_LAYOUT") != nullptr) {
+        std::ofstream trace(recomp::get_config_path() / "layout-trace.log", std::ios::trunc);
+        if (trace) trace << "[BAR_DBG_LAYOUT] game started; waiting for in-game layout values\n";
+    }
 
     // Load persisted graphics settings (or write defaults on first run) and push them into the
     // runtime. This also enables RT64 high-FPS frame interpolation: the default config sets
@@ -1201,6 +1207,11 @@ int main(int argc, char** argv) {
 
     // Blocks until the game exits.
     recomp::start(config);
+#ifdef BEETLE_ENABLE_FRONTEND
+    // SDL does not emit a device-removed event when the process exits. Explicitly
+    // stop the Wheel spring/rumble effect before the frontend tears down SDL.
+    recompinput::shutdown_wheel_force_feedback();
+#endif
     bar_stop_preempt_timer();
     return EXIT_SUCCESS;
 }
